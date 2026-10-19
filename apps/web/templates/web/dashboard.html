@@ -1,0 +1,58 @@
+{% extends 'web/base.html' %}
+{% load static %}
+{% block title %}Panel{% endblock %}
+{% block encabezado %}Panel principal{% endblock %}
+{% block content %}
+<div class="row g-3 mb-4">
+  {% for k in kpis %}
+  <div class="col-6 col-md-4 col-xl-2">
+    <div class="kpi-card border-top border-{{ k.color }} border-4">
+      <div class="kpi-icon text-{{ k.color }}"><i class="bi {{ k.icono }}"></i></div>
+      <div class="kpi-valor">{{ k.valor }}</div>
+      <div class="kpi-titulo">{{ k.titulo }}</div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-7">
+    <div class="card p-3 h-100">
+      <h6 class="mb-3"><i class="bi bi-bar-chart"></i> Empleados activos por unidad</h6>
+      <canvas id="chartUnidad" height="150"></canvas>
+    </div>
+  </div>
+  <div class="col-lg-5">
+    <div class="card p-3 h-100">
+      <h6 class="mb-3"><i class="bi bi-pie-chart"></i> Incidencias por estado</h6>
+      <canvas id="chartInc" height="150"></canvas>
+    </div>
+  </div>
+</div>
+
+{{ por_unidad|json_script:"dataUnidad" }}
+{{ inc_estado|json_script:"dataInc" }}
+{% endblock %}
+{% block scripts %}
+<script src="{% static 'vendor/chart.umd.min.js' %}"></script>
+<script>
+  const du = JSON.parse(document.getElementById('dataUnidad').textContent);
+  const di = JSON.parse(document.getElementById('dataInc').textContent);
+  new Chart(document.getElementById('chartUnidad'), {
+    type: 'bar',
+    data: {
+      labels: du.map(x => x.etiqueta),
+      datasets: [{ label: 'Empleados', data: du.map(x => x.total), backgroundColor: '#0d6efd' }]
+    },
+    options: { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } }
+  });
+  new Chart(document.getElementById('chartInc'), {
+    type: 'doughnut',
+    data: {
+      labels: di.map(x => x.etiqueta),
+      datasets: [{ data: di.map(x => x.total), backgroundColor: ['#0d6efd','#ffc107','#198754','#dc3545','#6c757d','#0dcaf0'] }]
+    },
+    options: { plugins: { legend: { position: 'bottom' } } }
+  });
+</script>
+{% endblock %}
