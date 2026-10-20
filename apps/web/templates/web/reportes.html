@@ -1,0 +1,26 @@
+{% extends 'web/base.html' %}
+{% block title %}Reportes{% endblock %}
+{% block encabezado %}Reportes e informes{% endblock %}
+{% block content %}
+<p class="text-muted">Elegí el formato: <strong>Ver</strong> (pantalla), <strong>Excel</strong> o <strong>PDF</strong>.</p>
+<div class="row g-3">
+  {% for r in reportes %}
+  <div class="col-md-6 col-xl-4">
+    <div class="card p-3 h-100">
+      <h6 class="mb-3"><i class="bi {{ r.icono }} text-primary"></i> {{ r.titulo }}</h6>
+      <div class="d-flex gap-2 mt-auto">
+        <a class="btn btn-sm btn-outline-primary" target="_blank" href="/api/reportes/{{ r.slug }}/?formato=json">
+          <i class="bi bi-eye"></i> Ver
+        </a>
+        <a class="btn btn-sm btn-outline-success" href="/api/reportes/{{ r.slug }}/?formato=excel">
+          <i class="bi bi-file-earmark-excel"></i> Excel
+        </a>
+        <a class="btn btn-sm btn-outline-danger" href="/api/reportes/{{ r.slug }}/?formato=pdf">
+          <i class="bi bi-file-earmark-pdf"></i> PDF
+        </a>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endblock %}

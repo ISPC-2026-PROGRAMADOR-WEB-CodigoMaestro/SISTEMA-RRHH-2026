@@ -1,0 +1,92 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Panel{% endblock %} · Gestión de RRHH</title>
+  <link rel="stylesheet" href="{% static 'vendor/bootstrap.min.css' %}">
+  <link rel="stylesheet" href="{% static 'vendor/bootstrap-icons.min.css' %}">
+  <link rel="stylesheet" href="{% static 'css/app.css' %}">
+</head>
+<body>
+<div class="app-layout">
+  <aside class="app-sidebar" id="sidebar">
+    <div class="app-brand">
+      <i class="bi bi-people-fill"></i>
+      <span>Gestión de RRHH</span>
+    </div>
+    <nav class="app-nav">
+      <a class="app-nav-link {% if request.resolver_match.url_name == 'dashboard' %}active{% endif %}"
+         href="{% url 'web:dashboard' %}">
+        <i class="bi bi-speedometer2"></i> Panel principal
+      </a>
+      {% if user.is_authenticated and puede_operar_personal %}
+      <div class="app-nav-title">Asistencia</div>
+      <a class="app-nav-link {% if request.resolver_match.url_name == 'importar' %}active{% endif %}"
+         href="{% url 'asistencia:importar' %}">
+        <i class="bi bi-upload"></i> Importar marcaciones
+      </a>
+      {% endif %}
+      {% if tiene_legajo %}
+      <a class="app-nav-link {% if request.resolver_match.url_name == 'mis_licencias' %}active{% endif %}"
+         href="{% url 'web:mis_licencias' %}">
+        <i class="bi bi-calendar-check"></i> Mis licencias
+      </a>
+      {% endif %}
+      <div class="app-nav-title">Módulos</div>
+      {% for item in menu_items %}
+      <a class="app-nav-link {% if request.resolver_match.kwargs.slug == item.slug %}active{% endif %}"
+         href="{% url 'web:modulo' slug=item.slug %}">
+        <i class="bi {{ item.icono }}"></i> {{ item.titulo }}
+      </a>
+      {% endfor %}
+      {% if es_gerente %}
+      <div class="app-nav-title">Administración</div>
+      <a class="app-nav-link {% if request.resolver_match.url_name == 'usuarios' %}active{% endif %}"
+         href="{% url 'web:usuarios' %}">
+        <i class="bi bi-person-badge"></i> Usuarios y Roles
+      </a>
+      {% endif %}
+      <div class="app-nav-title">Análisis</div>
+      <a class="app-nav-link {% if request.resolver_match.url_name == 'reportes' %}active{% endif %}"
+         href="{% url 'web:reportes' %}">
+        <i class="bi bi-file-earmark-bar-graph"></i> Reportes
+      </a>
+    </nav>
+  </aside>
+
+  <div class="app-main">
+    <header class="app-topbar">
+      <button class="btn btn-sm btn-light d-lg-none" onclick="document.getElementById('sidebar').classList.toggle('open')">
+        <i class="bi bi-list"></i>
+      </button>
+      <div class="app-topbar-title">{% block encabezado %}Panel{% endblock %}</div>
+      <div class="app-user">
+        {% if perfil_rol %}<span class="badge bg-secondary me-2">{{ perfil_rol }}</span>{% endif %}
+        <i class="bi bi-person-circle"></i>
+        <span class="ms-1">{{ user.get_full_name|default:user.username }}</span>
+        <a class="btn btn-sm btn-outline-danger ms-3" href="{% url 'web:logout' %}">
+          <i class="bi bi-box-arrow-right"></i> Salir
+        </a>
+      </div>
+    </header>
+
+    <div class="app-content">
+      {% if messages %}
+        {% for message in messages %}
+          <div class="alert alert-{{ message.tags|default:'info' }} alert-dismissible fade show" role="alert">
+            {{ message }}
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+          </div>
+        {% endfor %}
+      {% endif %}
+      {% block content %}{% endblock %}
+    </div>
+  </div>
+</div>
+
+<script src="{% static 'vendor/bootstrap.bundle.min.js' %}"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

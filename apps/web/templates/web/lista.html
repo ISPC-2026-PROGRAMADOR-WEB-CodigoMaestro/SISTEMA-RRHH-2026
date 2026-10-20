@@ -1,0 +1,123 @@
+{% extends 'web/base.html' %}
+{% block title %}{{ cfg.titulo }}{% endblock %}
+{% block encabezado %}{{ cfg.titulo }}{% endblock %}
+{% block content %}
+<div class="card p-3 mb-3">
+  <div class="d-flex flex-wrap gap-2 justify-content-between align-items-center">
+    <form class="d-flex flex-wrap gap-2" method="get">
+      <input type="search" name="q" value="{{ q }}" class="form-control"
+             placeholder="{% if slug == 'asistencia' %}Buscar por nombre o legajo...{% else %}Buscar...{% endif %}">
+      {% if slug == 'asistencia' %}
+      <label class="visually-hidden" for="fechaAsistencia">Fecha de asistencia</label>
+      <input class="form-control" type="date" id="fechaAsistencia" name="fecha"
+             value="{{ fecha_filtro|date:'Y-m-d' }}" aria-label="Fecha de asistencia">
+      {% endif %}
+      <button class="btn btn-outline-secondary" type="submit"><i class="bi bi-search"></i></button>
+    </form>
+    {% if slug == 'asistencia' %}
+    <a class="btn btn-outline-primary" href="{% url 'asistencia:fichar' %}"
+       target="_blank" rel="noopener">
+      <i class="bi bi-box-arrow-up-right"></i> Abrir ventana de fichaje
+    </a>
+    {% if puede_operar %}
+    <form method="post" action="{% url 'asistencia:cerrar_hoy' %}"
+          onsubmit="return confirm('¿Confirmas que terminó la jornada de hoy? Se registrarán las ausencias y licencias correspondientes.');">
+      {% csrf_token %}
+      <button class="btn btn-success" type="submit">
+        <i class="bi bi-calendar-check"></i> Día terminado
+      </button>
+    </form>
+    {% endif %}
+    {% endif %}
+    {% if form %}
+    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#modalNuevo">
+      <i class="bi bi-plus-lg"></i> Nuevo
+    </button>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card">
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0">
+      <thead>
+        <tr>
+          {% for c in columnas %}<th>{{ c.0 }}</th>{% endfor %}
+          {% if editable and puede_operar %}<th class="text-end">Acciones</th>{% endif %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for fila in filas %}
+        <tr>
+          {% for valor in fila.valores %}
+            {% if forloop.first and slug == 'incidencias' %}
+              <td><a href="{% url 'web:incidencia_detalle' pk=fila.id %}">{{ valor }}</a></td>
+            {% elif forloop.first and slug == 'asistencia' %}
+              <td><a href="{% url 'web:asistencia_empleado_mes' empleado_id=fila.empleado_id %}?mes={{ fecha_filtro|date:'Y-m' }}">{{ valor }}</a></td>
+            {% else %}
+              <td>{{ valor }}</td>
+            {% endif %}
+          {% endfor %}
+          {% if editable and puede_operar %}
+          <td class="text-end text-nowrap">
+            {% if fila.automatico %}
+            <span class="badge text-bg-secondary">Automático</span>
+            {% else %}
+            {% if slug != 'licencias' or fila.puede_editar %}
+            <a class="btn btn-sm btn-outline-secondary" title="Editar"
+               href="{% url 'web:modulo_editar' slug=slug pk=fila.id %}"><i class="bi bi-pencil"></i></a>
+            {% endif %}
+            {% if slug != 'licencias' or fila.puede_cancelar %}
+            <form method="post" action="{% url 'web:modulo_eliminar' slug=slug pk=fila.id %}"
+                  class="d-inline" onsubmit="return confirm('{% if slug == 'licencias' %}¿Cancelar esta solicitud?{% else %}¿Eliminar este registro?{% endif %}');">
+              {% csrf_token %}
+              <button class="btn btn-sm btn-outline-danger" title="{% if slug == 'licencias' %}Cancelar{% else %}Eliminar{% endif %}">
+                <i class="bi {% if slug == 'licencias' %}bi-x-circle{% else %}bi-trash{% endif %}"></i>
+              </button>
+            </form>
+            {% endif %}
+            {% endif %}
+          </td>
+          {% endif %}
+        </tr>
+        {% empty %}
+        <tr><td colspan="{{ num_columnas }}" class="text-center text-muted py-4">Sin registros.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+<p class="text-muted mt-2">Total: {{ total }} registro(s).</p>
+
+{% if form %}
+<div class="modal fade" id="modalNuevo" tabindex="-1">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <form method="post" enctype="multipart/form-data">
+        {% csrf_token %}
+        <div class="modal-header">
+          <h5 class="modal-title"><i class="bi {{ cfg.icono }}"></i> Nuevo · {{ cfg.titulo }}</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="row">
+            {% for field in form %}
+            <div class="col-md-6 mb-3">
+              <label class="form-label">{{ field.label }}{% if field.field.required %} <span class="text-danger">*</span>{% endif %}</label>
+              {{ field }}
+              {% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}
+              {% for error in field.errors %}<div class="text-danger small">{{ error }}</div>{% endfor %}
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+          <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg"></i> Guardar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

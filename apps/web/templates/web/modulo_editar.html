@@ -1,0 +1,28 @@
+{% extends 'web/base.html' %}
+{% block title %}Editar {{ cfg.titulo }}{% endblock %}
+{% block encabezado %}Editar · {{ cfg.titulo }}{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-8">
+    <div class="card p-4">
+      <form method="post" enctype="multipart/form-data">
+        {% csrf_token %}
+        <div class="row">
+          {% for field in form %}
+          <div class="col-md-6 mb-3">
+            <label class="form-label">{{ field.label }}{% if field.field.required %} <span class="text-danger">*</span>{% endif %}</label>
+            {{ field }}
+            {% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}
+            {% for error in field.errors %}<div class="text-danger small">{{ error }}</div>{% endfor %}
+          </div>
+          {% endfor %}
+        </div>
+        <div class="d-flex gap-2 mt-3">
+          <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg"></i> Guardar cambios</button>
+          <a href="{% url 'web:modulo' slug=slug %}" class="btn btn-outline-secondary">Cancelar</a>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

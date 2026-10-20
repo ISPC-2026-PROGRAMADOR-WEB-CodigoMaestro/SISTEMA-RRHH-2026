@@ -1,0 +1,100 @@
+{% extends 'web/base.html' %}
+{% block title %}Asistencia de {{ empleado }}{% endblock %}
+{% block encabezado %}Resumen mensual de asistencia{% endblock %}
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+  <div>
+    <h2 class="h4 mb-1">{{ empleado }}</h2>
+    <div class="text-muted">Legajo {{ empleado.legajo }} · {{ inicio_mes|date:"F Y" }}</div>
+  </div>
+  <a class="btn btn-outline-secondary" href="{% url 'web:modulo' slug='asistencia' %}?fecha={{ inicio_mes|date:'Y-m-d' }}">
+    <i class="bi bi-arrow-left"></i> Volver a Control de Asistencia
+  </a>
+</div>
+
+<form class="card card-body mb-3 d-flex flex-row align-items-end gap-2" method="get">
+  <div>
+    <label class="form-label" for="mes">Mes</label>
+    <input class="form-control" type="month" id="mes" name="mes" value="{{ mes }}">
+  </div>
+  <button class="btn btn-primary" type="submit">Ver mes</button>
+</form>
+
+<div class="row g-3 mb-4">
+  <div class="col-6 col-lg-2"><div class="card card-body h-100"><div class="text-muted">Asistencias</div><strong class="fs-4">{{ resumen.asistencias }}</strong></div></div>
+  <div class="col-6 col-lg-2"><div class="card card-body h-100"><div class="text-muted">Ausencias</div><strong class="fs-4">{{ resumen.ausencias }}</strong></div></div>
+  <div class="col-6 col-lg-2"><div class="card card-body h-100"><div class="text-muted">Horas extra</div><strong class="fs-4">{{ resumen.horas_extra_horas }} h {{ resumen.horas_extra_resto }} min</strong></div></div>
+  <div class="col-6 col-lg-2"><div class="card card-body h-100"><div class="text-muted">Tardanzas</div><strong class="fs-4">{{ resumen.tardanzas }}</strong></div></div>
+  <div class="col-6 col-lg-2"><div class="card card-body h-100"><div class="text-muted">Vacaciones solicitadas</div><strong class="fs-4">{{ resumen.vacaciones|floatformat:"-1" }} días</strong></div></div>
+  <div class="col-6 col-lg-2"><div class="card card-body h-100"><div class="text-muted">Licencias solicitadas</div><strong class="fs-4">{{ resumen.licencias|floatformat:"-1" }} días</strong></div></div>
+</div>
+
+<div class="card mb-4">
+  <div class="card-header bg-white"><h3 class="h5 mb-0">Asistencia y novedades del mes</h3></div>
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0">
+      <thead><tr><th>Fecha</th><th>Tipo</th><th>Ingreso</th><th>Egreso</th><th>Tardanza</th><th>Horas extra</th><th>Observaciones / avisos</th></tr></thead>
+      <tbody>
+        {% for registro in registros %}
+        <tr>
+          <td>{{ registro.fecha|date:"d/m/Y" }}</td>
+          <td>{{ registro.get_tipo_display }}</td>
+          <td>{{ registro.hora_ingreso|time:"H:i"|default:"—" }}</td>
+          <td>{{ registro.hora_egreso|time:"H:i"|default:"—" }}</td>
+          <td>{{ registro.minutos_tardanza }} min</td>
+          <td>{{ registro.minutos_extra }} min</td>
+          <td>{{ registro.observaciones|default:registro.justificacion|default:"—" }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="7" class="text-center text-muted py-4">No hay registros de asistencia para este mes.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card mb-4">
+  <div class="card-header bg-white"><h3 class="h5 mb-0">Vacaciones y licencias del mes</h3></div>
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0">
+      <thead><tr><th>Tipo</th><th>Desde</th><th>Hasta</th><th>Días</th><th>Estado</th><th>Motivo</th></tr></thead>
+      <tbody>
+        {% for solicitud in licencias %}
+        <tr>
+          <td>{{ solicitud.tipo_licencia.nombre }}</td>
+          <td>{{ solicitud.fecha_inicio|date:"d/m/Y" }}</td>
+          <td>{{ solicitud.fecha_fin|date:"d/m/Y" }}</td>
+          <td>{{ solicitud.dias_solicitados|floatformat:"-1" }}</td>
+          <td>{{ solicitud.get_estado_display }}</td>
+          <td>{{ solicitud.motivo|default:"—" }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="6" class="text-center text-muted py-4">No hay solicitudes para este mes.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card mb-4">
+  <div class="card-header bg-white"><h3 class="h5 mb-0">Avisos de asistencia</h3></div>
+  <div class="list-group list-group-flush">
+    {% for registro in alertas_asistencia %}
+    <div class="list-group-item">
+      <strong>{{ registro.fecha|date:"d/m/Y" }} · {{ registro.get_tipo_display }}</strong>
+      {% if registro.minutos_tardanza %} · Tardanza de {{ registro.minutos_tardanza }} min{% endif %}
+      {% if registro.observaciones %}<div>{{ registro.observaciones }}</div>{% endif %}
+      {% if registro.justificacion %}<div>Justificación: {{ registro.justificacion }}</div>{% endif %}
+    </div>
+    {% empty %}
+    <div class="list-group-item text-muted">No hay avisos de asistencia este mes.</div>
+    {% endfor %}
+    {% for incidencia in incidencias %}
+    <a class="list-group-item list-group-item-action" href="{% url 'web:incidencia_detalle' pk=incidencia.pk %}">
+      <strong>{{ incidencia.numero }} · {{ incidencia.get_prioridad_display }}</strong>
+      — {{ incidencia.titulo }} ({{ incidencia.get_estado_display }})
+    </a>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

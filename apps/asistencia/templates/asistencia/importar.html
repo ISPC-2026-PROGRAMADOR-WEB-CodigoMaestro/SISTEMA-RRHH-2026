@@ -1,0 +1,78 @@
+{% extends 'web/base.html' %}
+{% block title %}Importar marcaciones{% endblock %}
+{% block encabezado %}Importar marcaciones{% endblock %}
+{% block content %}
+<div class="row g-3">
+  <div class="col-lg-7">
+    <div class="card p-4">
+      <h2 class="h5">Importar archivo</h2>
+      <p>Sube un CSV o XLSX de hasta 5 MB y 20.000 filas. Columnas requeridas:</p>
+      <ul>
+        <li><code>legajo</code> y <code>fecha_hora</code>, o bien <code>fecha</code> y <code>hora</code>.</li>
+        <li><code>tipo</code> es opcional: ENTRADA/SALIDA o E/S. Si se omite, se toma la primera y última hora del día.</li>
+        <li>Fechas aceptadas: DD/MM/AAAA o AAAA-MM-DD.</li>
+      </ul>
+      <p><a href="{% url 'asistencia:ejemplo_csv' %}">Descargar CSV de ejemplo</a></p>
+      <form method="post" enctype="multipart/form-data">
+        {% csrf_token %}
+        <input type="hidden" name="accion" value="importar">
+        <div class="mb-3">
+          <label class="form-label" for="archivo">Archivo CSV o XLSX</label>
+          <input class="form-control" type="file" id="archivo" name="archivo" accept=".csv,.xlsx" required>
+        </div>
+        <button class="btn btn-primary" type="submit">
+          <i class="bi bi-upload"></i> Importar marcaciones
+        </button>
+      </form>
+    </div>
+  </div>
+  <div class="col-lg-5">
+    <div class="card p-4">
+      <h2 class="h5">Cerrar día</h2>
+      <p class="text-muted">Consolida las marcas, genera registros de licencias aprobadas y registra ausencias.</p>
+      <form method="post">
+        {% csrf_token %}
+        <input type="hidden" name="accion" value="cerrar">
+        <div class="mb-3">
+          <label class="form-label" for="fecha">Fecha a cerrar</label>
+          <input class="form-control" type="date" id="fecha" name="fecha"
+                 value="{{ request.POST.fecha|default:'' }}">
+          <div class="form-text">Si se deja vacío, se cierra el día anterior.</div>
+        </div>
+        <button class="btn btn-outline-primary" type="submit">
+          <i class="bi bi-calendar-check"></i> Cerrar día
+        </button>
+      </form>
+    </div>
+  </div>
+</div>
+
+{% if resumen %}
+<div class="card mt-4">
+  <div class="card-header bg-white">
+    <h2 class="h5 mb-0">Resumen{% if resumen.fecha %} · {{ resumen.fecha }}{% endif %}</h2>
+  </div>
+  <div class="card-body">
+    {% if resumen.tipo == 'importacion' %}
+    <p class="mb-1">Creadas: {{ resumen.creadas }} · Duplicadas: {{ resumen.duplicadas }}
+      · Intermedias ignoradas: {{ resumen.ignoradas }} · Días consolidados: {{ resumen.dias_consolidados }}</p>
+    {% else %}
+    <p class="mb-1">Consolidados: {{ resumen.consolidados }} · Ausentes creados: {{ resumen.ausentes_creados }}
+      · Licencias/vacaciones creadas: {{ resumen.licencias_creadas }} · Omitidos: {{ resumen.omitidos }}</p>
+    {% endif %}
+    {% if resumen.errores %}
+    <div class="table-responsive mt-3">
+      <table class="table table-sm table-striped mb-0">
+        <thead><tr><th>Fila</th><th>Motivo</th></tr></thead>
+        <tbody>
+          {% for error in resumen.errores %}
+          <tr><td>{{ error.fila }}</td><td>{{ error.motivo }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+{% endblock %}

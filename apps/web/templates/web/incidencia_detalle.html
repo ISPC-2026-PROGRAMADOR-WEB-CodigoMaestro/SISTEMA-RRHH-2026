@@ -1,0 +1,48 @@
+{% extends 'web/base.html' %}
+{% block title %}Incidencia {{ incidencia.numero }}{% endblock %}
+{% block encabezado %}Incidencia {{ incidencia.numero }}{% endblock %}
+{% block content %}
+<div class="row g-3">
+  <div class="col-lg-7">
+    <div class="card p-3">
+      <h5>{{ incidencia.titulo }}</h5>
+      <p class="mb-2">
+        <span class="badge bg-secondary">{{ incidencia.get_categoria_display }}</span>
+        <span class="badge bg-warning text-dark">{{ incidencia.get_prioridad_display }}</span>
+        <span class="badge bg-info text-dark">{{ incidencia.get_estado_display }}</span>
+      </p>
+      <p>{{ incidencia.descripcion }}</p>
+      <ul class="list-unstyled small text-muted">
+        <li><strong>Creada:</strong> {{ incidencia.fecha_creacion }}</li>
+        <li><strong>Empleado:</strong> {{ incidencia.empleado|default:"—" }}</li>
+        <li><strong>Unidad:</strong> {{ incidencia.unidad|default:"—" }}</li>
+        <li><strong>Responsable:</strong> {{ incidencia.responsable|default:"Sin asignar" }}</li>
+        {% if incidencia.documentacion %}
+        <li><strong>Adjunto:</strong> <a href="{{ incidencia.documentacion.url }}">descargar</a></li>
+        {% endif %}
+      </ul>
+    </div>
+  </div>
+  <div class="col-lg-5">
+    <div class="card p-3">
+      <h6><i class="bi bi-chat-left-text"></i> Comentarios y acciones</h6>
+      <div class="mb-3">
+        {% for c in incidencia.comentarios.all %}
+          <div class="border-start ps-2 mb-2">
+            <div class="small text-muted">{{ c.usuario|default:"—" }} · {{ c.fecha }}</div>
+            <div>{{ c.comentario }}</div>
+          </div>
+        {% empty %}
+          <p class="text-muted small">Sin comentarios todavía.</p>
+        {% endfor %}
+      </div>
+      <form method="post">
+        {% csrf_token %}
+        <textarea name="comentario" class="form-control mb-2" rows="3" placeholder="Agregar comentario..."></textarea>
+        <button class="btn btn-primary btn-sm"><i class="bi bi-send"></i> Enviar</button>
+      </form>
+    </div>
+  </div>
+</div>
+<p class="mt-3"><a href="{% url 'web:modulo' slug='incidencias' %}" class="btn btn-outline-secondary btn-sm"><i class="bi bi-arrow-left"></i> Volver a incidencias</a></p>
+{% endblock %}
