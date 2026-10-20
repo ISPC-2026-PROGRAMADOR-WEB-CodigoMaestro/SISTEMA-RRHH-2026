@@ -55,9 +55,14 @@ Estos usuarios se crean **automáticamente** al ejecutar `migrate`.
 | URL | Descripción |
 |-----|-------------|
 | `http://127.0.0.1:8000/` | Dashboard (login + panel) |
+| `http://127.0.0.1:8000/mis-licencias/` | Autoservicio para usuarios vinculados a un empleado |
+| `http://127.0.0.1:8000/asistencia/fichar/` | Fichaje personal de entrada y salida |
+| `http://127.0.0.1:8000/asistencia/importar/` | Importación de marcaciones y cierre diario (RR. HH.) |
 | `http://127.0.0.1:8000/admin/` | Administración Django |
 | `http://127.0.0.1:8000/api/docs/` | Swagger (API REST) |
+| `http://127.0.0.1:8000/api/asistencia/` | API de turnos, jornadas, marcaciones y cierres |
 | `http://127.0.0.1:8000/api/reportes/` | Reportes (JSON / Excel / PDF) |
+| `http://127.0.0.1:8000/api/capacitaciones/` | Cursos, inscripciones, asistencias y certificados |
 
 ---
 
@@ -66,13 +71,53 @@ Estos usuarios se crean **automáticamente** al ejecutar `migrate`.
 Para poblar el sistema con datos de ejemplo (empleados, unidades, puestos, incidencias):
 ```powershell
 python manage.py cargar_demo
+python manage.py cargar_asistencia_demo
 ```
+
+Para cerrar la asistencia del día anterior, o una fecha/rango concreto:
+```powershell
+python manage.py cerrar_asistencia
+python manage.py cerrar_asistencia --fecha 2026-10-14
+python manage.py cerrar_asistencia --desde 2026-10-01 --hasta 2026-10-14
+```
+
+El cierre diario consolida las marcaciones, crea registros de licencia o vacaciones
+solicitadas y genera ausencias en días laborables sin marcaciones. Las vacaciones no
+generan registros en fines de semana ni feriados; si alguien ficha durante una licencia,
+se conservan sus marcaciones y se agrega una observación. Control de Asistencia permite
+filtrar por fecha y muestra a todos los empleados activos: sus marcaciones registradas,
+las solicitudes de licencia/vacaciones del rango, sin depender de su estado de aprobación,
+y, si no aplica ninguna, el estado ausente en días laborables. Si un ausente automático
+obtiene una solicitud de licencia antes de volver a cerrar ese día,
+su estado se actualiza. La lista permite filtrar por nombre o legajo; al abrir un empleado
+se muestra el resumen del mes con asistencias, ausencias, horas extra, licencias,
+vacaciones e incidencias/avisos. Los totales de vacaciones y licencias usan los días
+solicitados guardados en cada solicitud y también se muestran en el detalle de cada una.
+Para ejecutarlo sin intervención,
+ejecuta una sola vez `python manage.py programar_cierre_asistencia` en Windows.
+Esto registra una tarea diaria a las 00:00 y la reintenta cuando el equipo vuelve
+a estar disponible; requiere mantener abierta la sesión de Windows del usuario que
+la programó. El botón **Día terminado** en Asistencia cierra manualmente el
+día actual; el cierre automático de medianoche procesa el día anterior. En Linux/cron,
+por ejemplo, prográmalo cada día a las 00:10:
+```cron
+10 0 * * * cd /ruta/al/proyecto && /ruta/al/proyecto/venv/bin/python manage.py cerrar_asistencia
+```
+
+La importación acepta CSV y XLSX de hasta 5 MB y 20.000 filas. El archivo requiere
+`legajo` y `fecha_hora`, o `legajo`, `fecha` y `hora`; `tipo` (ENTRADA/SALIDA o E/S)
+es opcional. Sin `tipo`, se toma la primera marcación del día como entrada y la última
+como salida.
 
 ---
 
 ## 🧩 Módulos
 
-Empleados · Estructura organizacional · Puestos y cargos · Designaciones · Legajo digital · Asistencia · Vacaciones y licencias · Evaluaciones · Sanciones · Incidencias · Vida laboral · Reportes
+Empleados · Estructura organizacional · Puestos y cargos · Designaciones · Legajo digital · Asistencia (fichaje web, jornadas, turnos, feriados, importación CSV/XLSX y cierre diario) · Vacaciones y licencias · Evaluaciones ponderadas · Sanciones con flujo de propuesta, notificación, aplicación y apelación · Incidencias con transiciones controladas · Capacitaciones · Vida laboral · Reportes
+
+Las solicitudes cuentan días hábiles de lunes a viernes, excluyendo los feriados cargados en el módulo de asistencia. El derecho anual de vacaciones usa la antigüedad al 31 de diciembre y la escala de 14, 21, 28 o 35 días.
+
+Las evaluaciones aceptan calificaciones entre 0 y 100 y calculan su resultado con el promedio ponderado de los criterios. Se pueden consultar comparaciones con el período anterior desde el endpoint de la evaluación. Los certificados de capacitación se emiten al completar el mínimo de asistencia configurado y quedan asociados al legajo digital del empleado.
 
 ---
 

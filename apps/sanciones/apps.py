@@ -6,3 +6,5 @@ class SancionesConfig(AppConfig):
     name = 'apps.sanciones'
     verbose_name = 'Sanciones'
 
+    def ready(self):
+        from . import signals  # noqa: F401

@@ -21,6 +21,19 @@
          href="{% url 'web:dashboard' %}">
         <i class="bi bi-speedometer2"></i> Panel principal
       </a>
+      {% if user.is_authenticated and puede_operar_personal %}
+      <div class="app-nav-title">Asistencia</div>
+      <a class="app-nav-link {% if request.resolver_match.url_name == 'importar' %}active{% endif %}"
+         href="{% url 'asistencia:importar' %}">
+        <i class="bi bi-upload"></i> Importar marcaciones
+      </a>
+      {% endif %}
+      {% if tiene_legajo %}
+      <a class="app-nav-link {% if request.resolver_match.url_name == 'mis_licencias' %}active{% endif %}"
+         href="{% url 'web:mis_licencias' %}">
+        <i class="bi bi-calendar-check"></i> Mis licencias
+      </a>
+      {% endif %}
       <div class="app-nav-title">Módulos</div>
       {% for item in menu_items %}
       <a class="app-nav-link {% if request.resolver_match.kwargs.slug == item.slug %}active{% endif %}"

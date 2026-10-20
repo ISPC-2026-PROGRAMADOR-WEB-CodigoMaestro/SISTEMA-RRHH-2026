@@ -1,5 +1,6 @@
 """Registro central de módulos y utilidades de visualización del dashboard."""
 from apps.asistencia.models import RegistroAsistencia
+from apps.capacitaciones.models import Curso
 from apps.empleados.models import DocumentoLegajo, Empleado, HistorialLaboral
 from apps.evaluaciones.models import EvaluacionDesempeno
 from apps.incidencias.models import Incidencia
@@ -10,6 +11,7 @@ from apps.sanciones.models import Sancion
 
 from .forms import (
     AsistenciaForm,
+    CursoForm,
     DesignacionForm,
     DocumentoForm,
     EmpleadoForm,
@@ -96,6 +98,14 @@ MODULOS = {
         'columnas': [('Empleado', 'empleado'), ('Período', 'periodo.nombre'), ('Fecha', 'fecha_evaluacion'),
                      ('Calificación', 'calificacion_general'), ('Estado', 'estado')],
         'search': ['empleado__apellido', 'empleado__legajo'],
+    },
+    'capacitaciones': {
+        'titulo': 'Capacitaciones', 'icono': 'bi-mortarboard', 'model': Curso,
+        'form': CursoForm,
+        'columnas': [('Curso', 'nombre'), ('Instructor', 'instructor'),
+                     ('Inicio', 'fecha_inicio'), ('Fin', 'fecha_fin'),
+                     ('Sesiones', 'sesiones'), ('Activo', 'activo')],
+        'search': ['nombre', 'instructor'],
     },
     'sanciones': {
         'titulo': 'Sanciones', 'icono': 'bi-exclamation-triangle', 'model': Sancion,

@@ -84,6 +84,26 @@ body {
 
 .card { border: 1px solid #e2e8f0; box-shadow: 0 1px 2px rgba(0, 0, 0, .04); }
 
+.modal-dialog-scrollable .modal-content > form {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.modal-dialog-scrollable .modal-content > form > .modal-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: 65vh;
+  overflow-y: auto;
+}
+
+.modal-dialog-scrollable .modal-content > form > .modal-header,
+.modal-dialog-scrollable .modal-content > form > .modal-footer {
+  flex-shrink: 0;
+}
+
 .login-body {
   display: flex;
   align-items: center;

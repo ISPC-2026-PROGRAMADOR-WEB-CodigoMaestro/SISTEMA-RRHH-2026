@@ -1,5 +1,6 @@
 ﻿"""Evaluacion de desempeno."""
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.db import models
 
 
@@ -17,6 +18,10 @@ class PeriodoEvaluacion(models.Model):
 
     def __str__(self):
         return self.nombre
+
+    def clean(self):
+        if self.fecha_fin < self.fecha_inicio:
+            raise ValidationError({'fecha_fin': 'El período no puede finalizar antes de comenzar.'})
 
 
 class CriterioEvaluacion(models.Model):
@@ -38,6 +43,10 @@ class CriterioEvaluacion(models.Model):
 
     def __str__(self):
         return self.nombre
+
+    def clean(self):
+        if self.peso <= 0:
+            raise ValidationError({'peso': 'El peso debe ser mayor que cero.'})
 
 
 class EvaluacionDesempeno(models.Model):
@@ -88,6 +97,12 @@ class EvaluacionDesempeno(models.Model):
     def __str__(self):
         return f'{self.empleado.legajo} | {self.periodo} | {self.fecha_evaluacion}'
 
+    def clean(self):
+        if self.calificacion_general is not None and not 0 <= self.calificacion_general <= 100:
+            raise ValidationError({
+                'calificacion_general': 'La calificación debe estar entre 0 y 100.'
+            })
+
 
 class DetalleEvaluacion(models.Model):
     evaluacion = models.ForeignKey(
@@ -110,3 +125,7 @@ class DetalleEvaluacion(models.Model):
 
     def __str__(self):
         return f'{self.evaluacion_id} - {self.criterio}: {self.calificacion}'
+
+    def clean(self):
+        if not 0 <= self.calificacion <= 100:
+            raise ValidationError({'calificacion': 'La calificación debe estar entre 0 y 100.'})

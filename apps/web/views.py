@@ -1,17 +1,24 @@
 """Vistas del dashboard web (Django templates + Bootstrap)."""
+from datetime import date, timedelta
+from decimal import Decimal
+
 from django.contrib import messages
 from django.contrib.auth import authenticate, get_user_model, login, logout
 from django.contrib.auth.decorators import login_required
+from django.core.exceptions import PermissionDenied, ValidationError
 from django.db.models import Count
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 
+from apps.asistencia.models import Feriado, RegistroAsistencia
 from apps.empleados.models import Empleado
 from apps.incidencias.models import ComentarioIncidencia, Incidencia
-from apps.licencias.models import SolicitudLicencia
+from apps.licencias.models import SaldoVacaciones, SolicitudLicencia
+from apps.licencias.services import cancelar_solicitud, dias_vacaciones_por_antiguedad
 from apps.puestos.models import Puesto
 from apps.sanciones.models import Sancion
 
+from .forms import LicenciaAutogestionForm
 from .forms_usuarios import UsuarioForm
 from .registro import MODULOS, display
 
@@ -74,6 +81,70 @@ def dashboard(request):
 
 
 @login_required
+def mis_licencias(request):
+    empleado = Empleado.objects.filter(usuario=request.user).first()
+    if empleado is None:
+        raise PermissionDenied('El usuario no tiene un legajo de empleado vinculado.')
+
+    form = LicenciaAutogestionForm(
+        request.POST or None,
+        empleado=empleado,
+    )
+    if request.method == 'POST' and form.is_valid():
+        SolicitudLicencia.objects.create(
+            empleado=empleado,
+            tipo_licencia=form.cleaned_data['tipo_licencia'],
+            fecha_inicio=form.cleaned_data['fecha_inicio'],
+            fecha_fin=form.cleaned_data['fecha_fin'],
+            dias_solicitados=form.cleaned_data['dias_solicitados'],
+            motivo=form.cleaned_data['motivo'],
+            solicitado_por=request.user,
+        )
+        messages.success(request, 'La solicitud de licencia se envió para revisión.')
+        return redirect('web:mis_licencias')
+
+    anio = timezone.localdate().year
+    saldo_actual = SaldoVacaciones.objects.filter(
+        empleado=empleado, anio=anio,
+    ).first()
+    dias_disponibles = (
+        saldo_actual.dias_pendientes
+        if saldo_actual
+        else dias_vacaciones_por_antiguedad(empleado, anio)
+    )
+    solicitudes = SolicitudLicencia.objects.filter(
+        empleado=empleado,
+    ).select_related('tipo_licencia').order_by('-fecha_solicitud')
+    return render(request, 'web/mis_licencias.html', {
+        'form': form,
+        'solicitudes': solicitudes,
+        'anio': anio,
+        'dias_disponibles': dias_disponibles,
+    })
+
+
+@login_required
+def cancelar_mi_licencia(request, pk):
+    if request.method != 'POST':
+        raise PermissionDenied('La cancelación debe enviarse mediante POST.')
+    empleado = Empleado.objects.filter(usuario=request.user).first()
+    if empleado is None:
+        raise PermissionDenied('El usuario no tiene un legajo de empleado vinculado.')
+    solicitud = get_object_or_404(SolicitudLicencia, pk=pk, empleado=empleado)
+    try:
+        cancelar_solicitud(solicitud.pk, request.user, 'Cancelada por el empleado.')
+    except ValidationError as exc:
+        errors = (
+            [error for field_errors in exc.message_dict.values() for error in field_errors]
+            if hasattr(exc, 'message_dict') else exc.messages
+        )
+        messages.error(request, ' '.join(str(error) for error in errors))
+    else:
+        messages.success(request, 'La solicitud se canceló correctamente.')
+    return redirect('web:mis_licencias')
+
+
+@login_required
 def modulo_list(request, slug):
     cfg = MODULOS.get(slug)
     if cfg is None:
@@ -83,6 +154,19 @@ def modulo_list(request, slug):
     modelo = cfg['model']
     form_class = cfg['form']
     qs = modelo.objects.all()
+    fecha_filtro = None
+    if slug == 'asistencia':
+        fecha_texto = request.GET.get('fecha', '').strip()
+        try:
+            fecha_filtro = date.fromisoformat(fecha_texto) if fecha_texto else timezone.localdate()
+        except ValueError:
+            messages.error(request, 'La fecha debe tener formato YYYY-MM-DD.')
+            fecha_filtro = timezone.localdate()
+        qs = qs.filter(fecha=fecha_filtro).select_related('empleado').order_by(
+            'empleado__apellido',
+            'empleado__nombre',
+            'empleado__legajo',
+        )
 
     q = request.GET.get('q', '').strip()
     if q and cfg.get('search'):
@@ -101,21 +185,234 @@ def modulo_list(request, slug):
         if request.method == 'POST':
             form = form_class(request.POST, request.FILES)
             if form.is_valid():
-                form.save()
+                if slug == 'licencias':
+                    solicitud = form.save(commit=False)
+                    solicitud.solicitado_por = request.user
+                    solicitud.save()
+                elif slug == 'sanciones':
+                    sancion = form.save(commit=False)
+                    sancion.responsable = request.user
+                    sancion.save()
+                else:
+                    form.save()
                 messages.success(request, f'{cfg["titulo"]}: registro creado correctamente.')
                 return redirect('web:modulo', slug=slug)
         else:
             form = form_class()
 
-    filas = [
-        {'id': obj.pk, 'valores': [display(obj, attr) for _, attr in cfg['columnas']]}
-        for obj in qs[:300]
-    ]
+    filas = []
+    if slug == 'asistencia':
+        empleados = Empleado.objects.filter(estado=Empleado.Estado.ACTIVO)
+        if q:
+            from django.db.models import Q
+            empleados = empleados.filter(
+                Q(legajo__icontains=q)
+                | Q(apellido__icontains=q)
+                | Q(nombre__icontains=q)
+            )
+        empleados = empleados.order_by('apellido', 'nombre', 'legajo')
+        empleados_ids = list(empleados.values_list('pk', flat=True))
+        registros = {
+            registro.empleado_id: registro
+            for registro in RegistroAsistencia.objects.filter(
+                empleado_id__in=empleados_ids,
+                fecha=fecha_filtro,
+            ).select_related('empleado')
+        }
+        solicitudes_en_rango = SolicitudLicencia.objects.filter(
+            empleado_id__in=empleados_ids,
+            fecha_inicio__lte=fecha_filtro,
+            fecha_fin__gte=fecha_filtro,
+        ).values_list('empleado_id', 'tipo_licencia__descuenta_vacaciones')
+        vacaciones = set()
+        licencias = set()
+        for empleado_id, descuenta_vacaciones in solicitudes_en_rango:
+            (vacaciones if descuenta_vacaciones else licencias).add(empleado_id)
+        feriado = Feriado.objects.filter(fecha=fecha_filtro).exists()
+
+        for empleado in empleados:
+            registro = registros.get(empleado.pk)
+            tiene_licencia = empleado.pk in licencias
+            tiene_vacaciones_laborable = (
+                empleado.pk in vacaciones
+                and fecha_filtro.weekday() < 5
+                and not feriado
+            )
+            if (
+                registro is not None
+                and registro.tipo == RegistroAsistencia.Tipo.AUSENTE
+                and (tiene_vacaciones_laborable or tiene_licencia)
+            ):
+                valores = [display(registro, attr) for _, attr in cfg['columnas']]
+                valores[2] = (
+                    RegistroAsistencia.Tipo.VACACIONES.label
+                    if tiene_vacaciones_laborable
+                    else RegistroAsistencia.Tipo.LICENCIA.label
+                )
+                fila_id = None
+                automatico = True
+            elif registro is not None:
+                valores = [display(registro, attr) for _, attr in cfg['columnas']]
+                fila_id = registro.pk
+                automatico = False
+            else:
+                if tiene_vacaciones_laborable:
+                    tipo = RegistroAsistencia.Tipo.VACACIONES.label
+                elif tiene_licencia:
+                    tipo = RegistroAsistencia.Tipo.LICENCIA.label
+                elif fecha_filtro.weekday() < 5 and not feriado:
+                    tipo = RegistroAsistencia.Tipo.AUSENTE.label
+                elif feriado:
+                    tipo = RegistroAsistencia.Tipo.FERIADO.label
+                else:
+                    tipo = 'No laborable'
+                valores = [
+                    str(empleado),
+                    fecha_filtro,
+                    tipo,
+                    '',
+                    '',
+                    '',
+                ]
+                fila_id = None
+                automatico = True
+            filas.append({
+                'id': fila_id,
+                'empleado_id': empleado.pk,
+                'valores': valores,
+                'puede_editar': False,
+                'puede_cancelar': False,
+                'automatico': automatico,
+            })
+        total = len(filas)
+    else:
+        for obj in qs[:300]:
+            puede_editar_solicitud = not isinstance(obj, SolicitudLicencia) or obj.estado in (
+                SolicitudLicencia.Estado.PENDIENTE,
+                SolicitudLicencia.Estado.BORRADOR,
+            )
+            puede_cancelar_solicitud = isinstance(obj, SolicitudLicencia) and obj.estado in (
+                SolicitudLicencia.Estado.PENDIENTE,
+                SolicitudLicencia.Estado.APROBADA,
+            )
+            filas.append({
+                'id': obj.pk,
+                'valores': [display(obj, attr) for _, attr in cfg['columnas']],
+                'puede_editar': puede_editar_solicitud,
+                'puede_cancelar': puede_cancelar_solicitud,
+                'automatico': False,
+            })
+        total = qs.count()
     num_columnas = len(cfg['columnas']) + (1 if (editable and puede_operar) else 0)
     return render(request, 'web/lista.html', {
         'cfg': cfg, 'slug': slug, 'filas': filas, 'columnas': cfg['columnas'],
-        'form': form, 'q': q, 'total': qs.count(),
+        'form': form, 'q': q, 'total': total,
         'editable': editable, 'puede_operar': puede_operar, 'num_columnas': num_columnas,
+        'fecha_filtro': fecha_filtro,
+    })
+
+
+@login_required
+def asistencia_empleado_mes(request, empleado_id):
+    empleado = get_object_or_404(Empleado, pk=empleado_id)
+    hoy = timezone.localdate()
+    mes_texto = request.GET.get('mes', '')
+    try:
+        anio, mes = (
+            (int(mes_texto[:4]), int(mes_texto[5:7]))
+            if len(mes_texto) == 7 and mes_texto[4] == '-'
+            else (hoy.year, hoy.month)
+        )
+        inicio_mes = date(anio, mes, 1)
+    except (TypeError, ValueError):
+        messages.error(request, 'Selecciona un mes válido.')
+        inicio_mes = date(hoy.year, hoy.month, 1)
+    if inicio_mes.month == 12:
+        fin_mes = date(inicio_mes.year + 1, 1, 1)
+    else:
+        fin_mes = date(inicio_mes.year, inicio_mes.month + 1, 1)
+    fin_inclusivo = fin_mes - timedelta(days=1)
+
+    registros = list(
+        RegistroAsistencia.objects.filter(
+            empleado=empleado,
+            fecha__gte=inicio_mes,
+            fecha__lt=fin_mes,
+        ).order_by('fecha')
+    )
+    licencias = list(
+        SolicitudLicencia.objects.filter(
+            empleado=empleado,
+            fecha_inicio__lt=fin_mes,
+            fecha_fin__gte=inicio_mes,
+        ).select_related('tipo_licencia').order_by('fecha_inicio')
+    )
+    incidencias = list(
+        Incidencia.objects.filter(
+            empleado=empleado,
+            fecha_creacion__year=inicio_mes.year,
+            fecha_creacion__month=inicio_mes.month,
+        ).order_by('-fecha_creacion')
+    )
+    alertas_asistencia = [
+        registro for registro in registros
+        if registro.tipo in (
+            RegistroAsistencia.Tipo.AUSENTE,
+            RegistroAsistencia.Tipo.TARDANZA,
+            RegistroAsistencia.Tipo.RETIRO_ANTICIPADO,
+        )
+        or registro.observaciones
+    ]
+    resumen = {
+        'asistencias': sum(
+            registro.tipo in (
+                RegistroAsistencia.Tipo.PRESENTE,
+                RegistroAsistencia.Tipo.TARDANZA,
+                RegistroAsistencia.Tipo.RETIRO_ANTICIPADO,
+            )
+            for registro in registros
+        ),
+        'ausencias': sum(
+            registro.tipo == RegistroAsistencia.Tipo.AUSENTE
+            for registro in registros
+        ),
+        'horas_extra_minutos': sum(registro.minutos_extra for registro in registros),
+        'vacaciones': sum(
+            (
+                solicitud.dias_solicitados
+                for solicitud in licencias
+                if solicitud.tipo_licencia.descuenta_vacaciones
+            ),
+            Decimal('0'),
+        ),
+        'licencias': sum(
+            (
+                solicitud.dias_solicitados
+                for solicitud in licencias
+                if not solicitud.tipo_licencia.descuenta_vacaciones
+            ),
+            Decimal('0'),
+        ),
+        'tardanzas': sum(
+            registro.tipo == RegistroAsistencia.Tipo.TARDANZA
+            for registro in registros
+        ),
+    }
+    resumen['horas_extra_horas'], resumen['horas_extra_resto'] = divmod(
+        resumen['horas_extra_minutos'],
+        60,
+    )
+    return render(request, 'web/asistencia_empleado_mes.html', {
+        'empleado': empleado,
+        'mes': inicio_mes.strftime('%Y-%m'),
+        'mes_nombre': inicio_mes.strftime('%B %Y'),
+        'inicio_mes': inicio_mes,
+        'fin_mes': fin_inclusivo,
+        'resumen': resumen,
+        'registros': registros,
+        'licencias': licencias,
+        'incidencias': incidencias,
+        'alertas_asistencia': alertas_asistencia,
     })
 
 
@@ -262,6 +559,9 @@ def modulo_editar(request, slug, pk):
         messages.error(request, 'No tenés permiso para editar este módulo.')
         return redirect('web:modulo', slug=slug)
     objeto = get_object_or_404(cfg['model'], pk=pk)
+    if isinstance(objeto, Sancion) and objeto.estado != Sancion.Estado.PROPUESTA:
+        messages.error(request, 'Solo se pueden editar sanciones en estado de propuesta.')
+        return redirect('web:modulo', slug=slug)
     if request.method == 'POST':
         form = cfg['form'](request.POST, request.FILES, instance=objeto)
         if form.is_valid():
@@ -286,6 +586,18 @@ def modulo_eliminar(request, slug, pk):
         return redirect('web:modulo', slug=slug)
     objeto = get_object_or_404(cfg['model'], pk=pk)
     if request.method == 'POST':
+        if isinstance(objeto, SolicitudLicencia):
+            try:
+                cancelar_solicitud(objeto.pk, request.user, 'Cancelada desde el módulo de licencias.')
+            except ValidationError as exc:
+                errors = (
+                    [error for field_errors in exc.message_dict.values() for error in field_errors]
+                    if hasattr(exc, 'message_dict') else exc.messages
+                )
+                messages.error(request, ' '.join(str(error) for error in errors))
+            else:
+                messages.success(request, 'La solicitud de licencia se canceló correctamente.')
+            return redirect('web:modulo', slug=slug)
         try:
             objeto.delete()
             messages.success(request, f'{cfg["titulo"]}: registro eliminado.')
@@ -295,4 +607,3 @@ def modulo_eliminar(request, slug, pk):
                 f'No se puede eliminar este registro porque tiene datos relacionados ({exc}).',
             )
     return redirect('web:modulo', slug=slug)
-

@@ -1,6 +1,8 @@
 ﻿"""Gestion de incidencias de Recursos Humanos."""
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.db import models
+from django.utils import timezone
 
 
 class Incidencia(models.Model):
@@ -79,6 +81,17 @@ class Incidencia(models.Model):
 
     def __str__(self):
         return f'{self.numero} - {self.titulo}'
+
+    def clean(self):
+        if self.fecha_estimada_resolucion:
+            fecha_base = self.fecha_creacion.date() if self.fecha_creacion else timezone.localdate()
+            if self.fecha_estimada_resolucion < fecha_base:
+                raise ValidationError({
+                    'fecha_estimada_resolucion':
+                        'La fecha estimada no puede ser anterior a la fecha de creación.'
+                })
+        if self.estado in (self.Estado.RESUELTA, self.Estado.CERRADA) and not self.fecha_resolucion:
+            raise ValidationError({'fecha_resolucion': 'Una incidencia resuelta debe tener fecha de resolución.'})
 
     def save(self, *args, **kwargs):
         if not self.numero:

@@ -10,6 +10,13 @@ urlpatterns = [
     path('login/', views.login_view, name='login'),
     path('logout/', views.logout_view, name='logout'),
     path('reportes/', views.reportes_view, name='reportes'),
+    path('mis-licencias/', views.mis_licencias, name='mis_licencias'),
+    path('mis-licencias/<int:pk>/cancelar/', views.cancelar_mi_licencia, name='cancelar_mi_licencia'),
+    path(
+        'asistencia/empleados/<int:empleado_id>/',
+        views.asistencia_empleado_mes,
+        name='asistencia_empleado_mes',
+    ),
     path('incidencias/<int:pk>/', views.incidencia_detalle, name='incidencia_detalle'),
     path('m/<slug:slug>/', views.modulo_list, name='modulo'),
     path('m/<slug:slug>/<int:pk>/editar/', views.modulo_editar, name='modulo_editar'),

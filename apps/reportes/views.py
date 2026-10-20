@@ -1,7 +1,7 @@
 """Reportes e informes de RRHH (JSON, PDF y Excel)."""
 from datetime import date
 
-from django.db.models import Avg, Count, Q, Sum
+from django.db.models import Avg, Count, DecimalField, ExpressionWrapper, F, Q, Sum
 from django.http import HttpResponse
 from django.utils import timezone
 from rest_framework.permissions import IsAuthenticated
@@ -137,7 +137,12 @@ class ReporteVacacionesPendientes(ReporteBase):
     columnas = ['Legajo', 'Apellido', 'Nombre', 'Anio', 'Correspondientes', 'Usados', 'Pendientes']
 
     def get_filas(self, request):
-        qs = SaldoVacaciones.objects.select_related('empleado').filter(dias_pendientes__gt=0)
+        qs = SaldoVacaciones.objects.select_related('empleado').annotate(
+            saldo_calculado=ExpressionWrapper(
+                F('dias_correspondientes') - F('dias_usados'),
+                output_field=DecimalField(max_digits=6, decimal_places=1),
+            )
+        ).filter(saldo_calculado__gt=0)
         anio = request.query_params.get('anio')
         if anio:
             qs = qs.filter(anio=anio)
@@ -268,5 +273,4 @@ class ResumenGeneral(APIView):
             'evaluaciones_total': EvaluacionDesempeno.objects.count(),
         }
         return Response(data)
-
 

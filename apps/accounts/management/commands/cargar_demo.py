@@ -7,6 +7,7 @@ from apps.asistencia.models import RegistroAsistencia
 from apps.empleados.models import Empleado
 from apps.incidencias.models import Incidencia
 from apps.licencias.models import SaldoVacaciones, TipoLicencia
+from apps.licencias.services import dias_vacaciones_por_antiguedad
 from apps.organizacion.models import UnidadOrganizacional
 from apps.puestos.models import Designacion, Puesto
 from apps.sanciones.models import Sancion
@@ -128,5 +129,8 @@ class Command(BaseCommand):
         for legajo, emp in self._empleados_map.items():
             SaldoVacaciones.objects.get_or_create(
                 empleado=emp, anio=anio,
-                defaults={'dias_correspondientes': 14, 'dias_usados': 4, 'dias_pendientes': 10},
+                defaults={
+                    'dias_correspondientes': dias_vacaciones_por_antiguedad(emp, anio),
+                    'dias_usados': 4,
+                },
             )

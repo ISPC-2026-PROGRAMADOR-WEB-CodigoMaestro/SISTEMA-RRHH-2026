@@ -11,11 +11,10 @@ class Sancion(models.Model):
         OTRA = 'OTRA', 'Otra medida'
 
     class Estado(models.TextChoices):
-        EN_REVISION = 'EN_REVISION', 'En revision'
+        PROPUESTA = 'PROPUESTA', 'Propuesta'
         NOTIFICADA = 'NOTIFICADA', 'Notificada'
-        FIRME = 'FIRME', 'Firme'
+        APLICADA = 'APLICADA', 'Aplicada'
         APELADA = 'APELADA', 'Apelada'
-        FINALIZADA = 'FINALIZADA', 'Finalizada'
 
     empleado = models.ForeignKey(
         'empleados.Empleado',
@@ -33,7 +32,7 @@ class Sancion(models.Model):
         help_text='Solo aplica si el tipo es suspension',
     )
     descargo_trabajador = models.TextField(blank=True)
-    estado = models.CharField(max_length=15, choices=Estado.choices, default=Estado.EN_REVISION)
+    estado = models.CharField(max_length=15, choices=Estado.choices, default=Estado.PROPUESTA)
     documentacion = models.FileField(
         upload_to='sanciones/',
         null=True,
@@ -49,6 +48,9 @@ class Sancion(models.Model):
     )
     fecha_registro = models.DateTimeField(auto_now_add=True)
     fecha_actualizacion = models.DateTimeField(auto_now=True)
+    fecha_notificacion = models.DateTimeField(null=True, blank=True)
+    fecha_aplicacion = models.DateTimeField(null=True, blank=True)
+    fecha_apelacion = models.DateTimeField(null=True, blank=True)
     observaciones = models.TextField(blank=True)
 
     class Meta:
@@ -58,3 +60,18 @@ class Sancion(models.Model):
 
     def __str__(self):
         return f'{self.empleado.legajo} | {self.get_tipo_display()} | {self.fecha_hecho}'
+
+    def clean(self):
+        from django.utils import timezone
+        from django.core.exceptions import ValidationError
+
+        if self.tipo == self.Tipo.SUSPENSION and not self.dias_suspension:
+            raise ValidationError({
+                'dias_suspension': 'Una suspensión debe indicar la cantidad de días.'
+            })
+        if self.tipo != self.Tipo.SUSPENSION and self.dias_suspension:
+            raise ValidationError({
+                'dias_suspension': 'Solo las suspensiones admiten días de suspensión.'
+            })
+        if self.fecha_hecho and self.fecha_hecho > timezone.localdate():
+            raise ValidationError({'fecha_hecho': 'La fecha del hecho no puede ser futura.'})

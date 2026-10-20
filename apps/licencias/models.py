@@ -39,12 +39,6 @@ class SaldoVacaciones(models.Model):
     anio = models.PositiveIntegerField('anio')
     dias_correspondientes = models.DecimalField(max_digits=5, decimal_places=1, default=0)
     dias_usados = models.DecimalField(max_digits=5, decimal_places=1, default=0)
-    dias_pendientes = models.DecimalField(
-        max_digits=5,
-        decimal_places=1,
-        default=0,
-        help_text='Se puede recalcular: correspondientes - usados',
-    )
     observaciones = models.TextField(blank=True)
 
     class Meta:
@@ -55,6 +49,10 @@ class SaldoVacaciones(models.Model):
 
     def __str__(self):
         return f'{self.empleado.legajo} | {self.anio} | pend: {self.dias_pendientes}'
+
+    @property
+    def dias_pendientes(self):
+        return self.dias_correspondientes - self.dias_usados
 
 
 class SolicitudLicencia(models.Model):
@@ -79,6 +77,11 @@ class SolicitudLicencia(models.Model):
     fecha_inicio = models.DateField()
     fecha_fin = models.DateField()
     dias_solicitados = models.DecimalField(max_digits=5, decimal_places=1)
+    dias_descontados = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text='Días descontados por año para poder revertir exactamente una cancelación.',
+    )
     motivo = models.TextField(blank=True)
     estado = models.CharField(max_length=15, choices=Estado.choices, default=Estado.PENDIENTE)
     solicitado_por = models.ForeignKey(

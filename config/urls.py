@@ -16,6 +16,7 @@ urlpatterns = [
     path('admin/', admin.site.urls),
 
     # Dashboard web (interfaz de usuario)
+    path('asistencia/', include('apps.asistencia.web_urls')),
     path('', include('apps.web.urls')),
 
     # Auth JWT
@@ -40,6 +41,7 @@ urlpatterns = [
     path('api/evaluaciones/', include('apps.evaluaciones.urls')),
     path('api/sanciones/', include('apps.sanciones.urls')),
     path('api/incidencias/', include('apps.incidencias.urls')),
+    path('api/capacitaciones/', include('apps.capacitaciones.urls')),
     path('api/reportes/', include('apps.reportes.urls')),
 ]
 

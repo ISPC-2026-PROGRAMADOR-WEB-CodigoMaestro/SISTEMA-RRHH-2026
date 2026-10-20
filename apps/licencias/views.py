@@ -1,6 +1,6 @@
 """Vistas de vacaciones y licencias."""
-from django.utils import timezone
-from rest_framework import permissions, viewsets
+from django.core.exceptions import ValidationError
+from rest_framework import permissions, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
@@ -12,6 +12,7 @@ from .serializers import (
     SolicitudLicenciaSerializer,
     TipoLicenciaSerializer,
 )
+from .services import aprobar_solicitud, cancelar_solicitud, rechazar_solicitud
 
 
 class TipoLicenciaViewSet(viewsets.ModelViewSet):
@@ -41,27 +42,46 @@ class SolicitudLicenciaViewSet(viewsets.ModelViewSet):
     search_fields = ['empleado__legajo', 'empleado__apellido', 'motivo']
     ordering_fields = ['fecha_inicio', 'fecha_solicitud']
     ordering = ['-fecha_solicitud']
+    http_method_names = ['get', 'post', 'put', 'patch', 'head', 'options']
 
     def perform_create(self, serializer):
         serializer.save(solicitado_por=self.request.user)
 
     @action(detail=True, methods=['post'])
     def aprobar(self, request, pk=None):
-        solicitud = self.get_object()
-        solicitud.estado = SolicitudLicencia.Estado.APROBADA
-        solicitud.revisado_por = request.user
-        solicitud.fecha_revision = timezone.now()
-        solicitud.observacion_revision = request.data.get('observacion', '')
-        solicitud.save()
+        try:
+            solicitud = aprobar_solicitud(
+                self.get_object().pk,
+                request.user,
+                request.data.get('observacion', ''),
+            )
+        except ValidationError as exc:
+            detail = exc.message_dict if hasattr(exc, 'message_dict') else exc.messages
+            return Response({'detail': detail}, status=status.HTTP_400_BAD_REQUEST)
         return Response(SolicitudLicenciaSerializer(solicitud).data)
 
     @action(detail=True, methods=['post'])
     def rechazar(self, request, pk=None):
-        solicitud = self.get_object()
-        solicitud.estado = SolicitudLicencia.Estado.RECHAZADA
-        solicitud.revisado_por = request.user
-        solicitud.fecha_revision = timezone.now()
-        solicitud.observacion_revision = request.data.get('observacion', '')
-        solicitud.save()
+        try:
+            solicitud = rechazar_solicitud(
+                self.get_object().pk,
+                request.user,
+                request.data.get('observacion', ''),
+            )
+        except ValidationError as exc:
+            detail = exc.message_dict if hasattr(exc, 'message_dict') else exc.messages
+            return Response({'detail': detail}, status=status.HTTP_400_BAD_REQUEST)
         return Response(SolicitudLicenciaSerializer(solicitud).data)
 
+    @action(detail=True, methods=['post'])
+    def cancelar(self, request, pk=None):
+        try:
+            solicitud = cancelar_solicitud(
+                self.get_object().pk,
+                request.user,
+                request.data.get('observacion', ''),
+            )
+        except ValidationError as exc:
+            detail = exc.message_dict if hasattr(exc, 'message_dict') else exc.messages
+            return Response({'detail': detail}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(SolicitudLicenciaSerializer(solicitud).data)

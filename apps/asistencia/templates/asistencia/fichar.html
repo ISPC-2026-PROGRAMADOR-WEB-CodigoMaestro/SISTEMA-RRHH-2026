@@ -1,0 +1,43 @@
+{% extends 'web/base.html' %}
+{% block title %}Fichar asistencia{% endblock %}
+{% block encabezado %}Fichar asistencia{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-8">
+    <div class="card p-4 text-center mb-4">
+      <div class="text-muted">{{ hoy|date:"l d/m/Y" }}</div>
+      <div class="display-3 fw-semibold my-3" id="reloj">--:--:--</div>
+      <form method="post">
+        {% csrf_token %}
+        <div class="mb-3 text-start">
+          <label class="form-label" for="legajo">Número de legajo</label>
+          <input class="form-control form-control-lg text-center" id="legajo" name="legajo"
+                 value="{{ legajo_ingresado }}" autocomplete="off" autofocus required>
+        </div>
+        <div class="d-flex flex-wrap justify-content-center gap-2">
+          <button class="btn btn-lg btn-success px-4" type="submit" name="accion" value="llegada">
+            <i class="bi bi-box-arrow-in-right"></i> Llegada
+          </button>
+          <button class="btn btn-lg btn-primary px-4" type="submit" name="accion" value="salida">
+            <i class="bi bi-box-arrow-right"></i> Salida
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const reloj = document.getElementById('reloj');
+  const actualizarReloj = () => {
+    reloj.textContent = new Intl.DateTimeFormat('es-AR', {
+      hour: '2-digit', minute: '2-digit', second: '2-digit',
+      timeZone: '{{ zona_horaria }}'
+    }).format(new Date());
+  };
+  actualizarReloj();
+  setInterval(actualizarReloj, 1000);
+</script>
+{% endblock %}

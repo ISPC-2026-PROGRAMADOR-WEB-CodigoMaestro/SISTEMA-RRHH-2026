@@ -62,7 +62,7 @@
 
 <!-- Modal: nuevo usuario -->
 <div class="modal fade" id="modalUsuario" tabindex="-1">
-  <div class="modal-dialog modal-lg">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
     <div class="modal-content">
       <form method="post" action="{% url 'web:usuario_crear' %}">
         {% csrf_token %}
