@@ -30,4 +30,11 @@ def menu(request):
         'es_gerente': rol_de(user) == 'GERENTE',
         'tiene_legajo': tiene_legajo,
         'puede_operar_personal': rol_de(user) in ('GERENTE', 'ADMINISTRATIVO'),
+        'puede_ver_horarios': (
+            user.is_authenticated
+            and (
+                rol_de(user) in ('GERENTE', 'ADMINISTRATIVO', 'LECTURA')
+                or tiene_legajo
+            )
+        ),
     }

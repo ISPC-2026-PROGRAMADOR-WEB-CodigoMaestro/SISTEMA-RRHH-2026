@@ -1,0 +1,261 @@
+{% extends 'web/base.html' %}
+{% block title %}Horarios laborales{% endblock %}
+{% block encabezado %}Horarios laborales{% endblock %}
+{% block content %}
+<div class="card p-3 mb-3">
+  <form class="row g-2 align-items-end" method="get">
+    <div class="col-sm-5 col-md-4">
+      <label class="form-label" for="fechaDesde">Desde</label>
+      <input class="form-control" type="date" id="fechaDesde" name="fecha_desde"
+             value="{{ fecha_desde }}">
+    </div>
+    <div class="col-sm-5 col-md-4">
+      <label class="form-label" for="fechaHasta">Hasta</label>
+      <input class="form-control" type="date" id="fechaHasta" name="fecha_hasta"
+             value="{{ fecha_hasta }}">
+    </div>
+    <div class="col-sm-2 col-md-4 d-flex gap-2">
+      <button class="btn btn-outline-primary" type="submit">
+        <i class="bi bi-search"></i> Filtrar
+      </button>
+      <a class="btn btn-outline-secondary" href="{% url 'web:horarios_laborales' %}">
+        Limpiar
+      </a>
+    </div>
+  </form>
+</div>
+
+{% for error in errores %}
+<div class="alert alert-warning" role="alert">{{ error }}</div>
+{% endfor %}
+
+{% if puede_gestionar %}
+<div class="row g-3 mb-3">
+  <div class="col-lg-5">
+    <div class="card h-100">
+      <div class="card-header fw-semibold">Cargar horario individual</div>
+      <div class="card-body">
+        <form method="post">
+          {% csrf_token %}
+          <input type="hidden" name="accion" value="crear_individual">
+          {% if formulario_horario.non_field_errors %}
+          <div class="alert alert-danger">{{ formulario_horario.non_field_errors }}</div>
+          {% endif %}
+          {% for field in formulario_horario %}
+          {% if field.name == 'alcance' %}
+          <fieldset class="mb-3">
+            <legend class="form-label fs-6 mb-2">{{ field.label }}</legend>
+            {% for choice in field %}
+            <div class="form-check mb-2">
+              <input class="form-check-input" type="radio"
+                     name="{{ field.html_name }}" value="{{ choice.data.value }}"
+                     id="{{ choice.id_for_label }}"
+                     {% if choice.data.selected %}checked{% endif %}
+                     {% if field.field.required %}required{% endif %}>
+              <label class="form-check-label" for="{{ choice.id_for_label }}">
+                {{ choice.choice_label }}
+              </label>
+            </div>
+            {% endfor %}
+            {% for error in field.errors %}
+            <div class="text-danger small">{{ error }}</div>
+            {% endfor %}
+          </fieldset>
+          {% else %}
+          <div class="mb-2">
+            <label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>
+            {{ field }}
+            {% for error in field.errors %}
+            <div class="text-danger small">{{ error }}</div>
+            {% endfor %}
+          </div>
+          {% endif %}
+          {% endfor %}
+          <button class="btn btn-primary" type="submit">
+            <i class="bi bi-calendar-plus"></i> Guardar horario
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-7">
+    <div class="card h-100">
+      <div class="card-header fw-semibold">Carga masiva de horarios</div>
+      <div class="card-body">
+        <p class="text-muted">
+          Sube un archivo CSV o XLSX (hasta 5 MB y 1.000 filas). La fecha debe
+          estar en formato AAAA-MM-DD o DD/MM/AAAA y las horas en HH:MM.
+          En los francos deja las horas vacías.
+        </p>
+        <p class="text-muted">
+          Si el empleado todavía no tiene horario predeterminado, su primera
+          carga con horario lo establece automáticamente. En las cargas
+          siguientes puedes elegir si el horario es solo para esa fecha o si
+          reemplaza el predeterminado desde esa fecha.
+        </p>
+        <p>
+          Columnas: <code>legajo, fecha, hora_entrada, hora_salida, es_franco,
+          observaciones</code>. La primera carga con horario de un empleado
+          establece su horario predeterminado. Para las siguientes puedes
+          elegir en la vista previa si el horario reemplaza el predeterminado
+          desde esa fecha o si es solo para ese día. El predeterminado se usa
+          únicamente en los días laborables de la Jornada asignada.
+          <a href="{% url 'web:plantilla_horarios_laborales' %}">Plantilla por fecha</a>
+        </p>
+        <form method="post" enctype="multipart/form-data" class="d-flex gap-2">
+          {% csrf_token %}
+          <input type="hidden" name="accion" value="previsualizar_archivo">
+          <input class="form-control" type="file" name="archivo_horarios"
+                 accept=".csv,.xlsx" required>
+          <button class="btn btn-outline-primary text-nowrap" type="submit">
+            <i class="bi bi-upload"></i> Vista previa
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% if filas_previsualizadas %}
+<div class="card mb-3">
+  <div class="card-header fw-semibold">Revisar importación</div>
+  <div class="card-body">
+    <p>Confirma las filas válidas. Los horarios existentes se omiten salvo que marques reemplazarlos.</p>
+    <form method="post">
+      {% csrf_token %}
+      <input type="hidden" name="accion" value="confirmar_archivo">
+      <input type="hidden" name="token" value="{{ token_previsualizacion }}">
+      <div class="table-responsive">
+        <table class="table table-sm table-hover align-middle">
+          <thead>
+            <tr>
+              <th>Fila</th><th>Empleado</th><th>Fecha</th><th>Entrada</th>
+              <th>Salida</th><th>Tipo</th><th>Predeterminado</th><th>Duplicado</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for fila in filas_previsualizadas %}
+            <tr>
+              <td>{{ fila.fila }}</td>
+              <td>{{ fila.empleado_nombre }} ({{ fila.legajo }})</td>
+              <td>{{ fila.fecha }}</td>
+              <td>{{ fila.hora_entrada|default:'—' }}</td>
+              <td>{{ fila.hora_salida|default:'—' }}</td>
+              <td>{% if fila.es_franco %}Franco{% else %}Jornada{% endif %}</td>
+              <td>
+                {% if fila.predeterminado_inicial %}
+                <span class="badge text-bg-primary">Primer horario: predeterminado</span>
+                {% elif not fila.es_franco %}
+                <label class="form-check">
+                  <input class="form-check-input" type="checkbox"
+                         name="predeterminado_{{ fila.indice }}">
+                  <span class="form-check-label">Cambiar desde esta fecha</span>
+                </label>
+                {% else %}
+                <span class="text-muted">—</span>
+                {% endif %}
+              </td>
+              <td>
+                {% if fila.duplicado %}
+                <label class="form-check">
+                  <input class="form-check-input" type="checkbox"
+                         name="reemplazar_{{ fila.indice }}">
+                  <span class="form-check-label">Reemplazar existente</span>
+                </label>
+                {% else %}
+                <span class="text-muted">Nuevo</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <button class="btn btn-success" type="submit">
+        <i class="bi bi-check2"></i> Confirmar carga
+      </button>
+    </form>
+  </div>
+</div>
+{% endif %}
+{% endif %}
+
+<div class="card">
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0">
+      <thead>
+        <tr>
+          {% if puede_ver_todos %}<th>Empleado</th>{% endif %}
+          <th>Fecha</th>
+          <th>Entrada</th>
+          <th>Salida</th>
+          <th>Aplicación</th>
+          <th>Tipo de jornada</th>
+          <th>Observaciones</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for horario in horarios %}
+        <tr>
+          {% if puede_ver_todos %}<td>{{ horario.empleado.nombre_completo }}</td>{% endif %}
+          <td>{{ horario.fecha|date:'d/m/Y' }}</td>
+          <td>{{ horario.hora_entrada|time:'H:i'|default:'—' }}</td>
+          <td>{{ horario.hora_salida|time:'H:i'|default:'—' }}</td>
+          <td>
+            {% if horario.es_predeterminado %}
+            <span class="badge text-bg-primary">Predeterminado desde esta fecha</span>
+            {% else %}
+            <span class="badge text-bg-light">Solo esta fecha</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if horario.es_franco %}
+            <span class="badge text-bg-secondary">Franco</span>
+            {% else %}
+            Jornada laboral
+            {% endif %}
+          </td>
+          <td>{{ horario.observaciones|default:'—' }}</td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="{% if puede_ver_todos %}7{% else %}6{% endif %}"
+              class="text-center text-muted py-4">
+            No hay horarios para el período seleccionado.
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="d-flex justify-content-between align-items-center mt-3">
+  <span class="text-muted">Total: {{ horarios.paginator.count }} horario(s).</span>
+  {% if horarios.has_other_pages %}
+  <nav aria-label="Paginación de horarios">
+    <ul class="pagination mb-0">
+      {% if horarios.has_previous %}
+      <li class="page-item">
+        <a class="page-link"
+           href="?fecha_desde={{ fecha_desde }}&fecha_hasta={{ fecha_hasta }}&page={{ horarios.previous_page_number }}">
+          Anterior
+        </a>
+      </li>
+      {% endif %}
+      <li class="page-item disabled">
+        <span class="page-link">{{ horarios.number }} / {{ horarios.paginator.num_pages }}</span>
+      </li>
+      {% if horarios.has_next %}
+      <li class="page-item">
+        <a class="page-link"
+           href="?fecha_desde={{ fecha_desde }}&fecha_hasta={{ fecha_hasta }}&page={{ horarios.next_page_number }}">
+          Siguiente
+        </a>
+      </li>
+      {% endif %}
+    </ul>
+  </nav>
+  {% endif %}
+</div>
+{% endblock %}

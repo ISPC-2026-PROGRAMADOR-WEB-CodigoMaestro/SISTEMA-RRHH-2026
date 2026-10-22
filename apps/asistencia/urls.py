@@ -2,6 +2,8 @@
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
+from apps.horarios_laborales.urls import router as horarios_router
+
 from .views import (
     AsignacionJornadaViewSet,
     FeriadoViewSet,
@@ -21,4 +23,5 @@ router.register('registros', RegistroAsistenciaViewSet, basename='registro-asist
 
 urlpatterns = [
     path('', include(router.urls)),
+    path('', include(horarios_router.urls)),
 ]

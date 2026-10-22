@@ -1,5 +1,12 @@
 ﻿from django.contrib import admin
-from .models import AsignacionJornada, Feriado, Jornada, Marcacion, RegistroAsistencia, Turno
+from .models import (
+    AsignacionJornada,
+    Feriado,
+    Jornada,
+    Marcacion,
+    RegistroAsistencia,
+    Turno,
+)
 
 
 @admin.register(Turno)

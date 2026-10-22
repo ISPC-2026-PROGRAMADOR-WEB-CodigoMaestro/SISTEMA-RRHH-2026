@@ -21,11 +21,17 @@
          href="{% url 'web:dashboard' %}">
         <i class="bi bi-speedometer2"></i> Panel principal
       </a>
-      {% if user.is_authenticated and puede_operar_personal %}
+      {% if user.is_authenticated and puede_ver_horarios %}
       <div class="app-nav-title">Asistencia</div>
+      {% if puede_operar_personal %}
       <a class="app-nav-link {% if request.resolver_match.url_name == 'importar' %}active{% endif %}"
          href="{% url 'asistencia:importar' %}">
         <i class="bi bi-upload"></i> Importar marcaciones
+      </a>
+      {% endif %}
+      <a class="app-nav-link {% if request.resolver_match.url_name == 'horarios_laborales' %}active{% endif %}"
+         href="{% url 'web:horarios_laborales' %}">
+        <i class="bi bi-calendar-week"></i> Horarios laborales
       </a>
       {% endif %}
       {% if tiene_legajo %}

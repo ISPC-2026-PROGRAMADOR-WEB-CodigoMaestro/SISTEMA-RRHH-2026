@@ -60,7 +60,7 @@ Estos usuarios se crean **automáticamente** al ejecutar `migrate`.
 | `http://127.0.0.1:8000/asistencia/importar/` | Importación de marcaciones y cierre diario (RR. HH.) |
 | `http://127.0.0.1:8000/admin/` | Administración Django |
 | `http://127.0.0.1:8000/api/docs/` | Swagger (API REST) |
-| `http://127.0.0.1:8000/api/asistencia/` | API de turnos, jornadas, marcaciones y cierres |
+| `http://127.0.0.1:8000/api/asistencia/` | API de horarios diarios, turnos, jornadas, marcaciones y cierres |
 | `http://127.0.0.1:8000/api/reportes/` | Reportes (JSON / Excel / PDF) |
 | `http://127.0.0.1:8000/api/capacitaciones/` | Cursos, inscripciones, asistencias y certificados |
 
@@ -103,6 +103,31 @@ por ejemplo, prográmalo cada día a las 00:10:
 ```cron
 10 0 * * * cd /ruta/al/proyecto && /ruta/al/proyecto/venv/bin/python manage.py cerrar_asistencia
 ```
+
+### Reglas de cálculo de asistencia
+
+La tolerancia se descuenta del retraso: solo los minutos posteriores al horario esperado
+más la tolerancia se guardan como tardanza. El horario diario usa la tolerancia global
+configurable; las jornadas conservan la tolerancia de `Jornada` o de `Turno`, según su
+origen. Esta regla de tardanza es una decisión de negocio revisable.
+
+El mínimo de horas extra depende actualmente del origen del horario: `HorarioDiario`
+aplica el mínimo global configurable (30 minutos por defecto), mientras que una `Jornada`
+conserva la regla histórica de contar cualquier exceso positivo. Esta diferencia es una
+decisión pendiente de unificar. Los turnos nocturnos asignan la salida fichada del día
+siguiente al horario del día de inicio. El tipo `Feriado` no diferencia feriados
+obligatorios de días no laborables; ambos usan por ahora el mismo cálculo.
+
+### Horario predeterminado y excepciones por fecha
+
+En la carga de horarios, la primera fecha con horario de un empleado establece
+su horario predeterminado desde esa fecha. Se aplica a los días laborables
+definidos por la Jornada del empleado; los días sin jornada laborable siguen
+sin horario automático. Las cargas posteriores pueden dejar una excepción
+`HorarioDiario` para una sola fecha o cambiar el predeterminado desde esa fecha.
+Una excepción diaria prevalece ese día y luego vuelve a aplicarse el
+predeterminado. Al cambiarlo se reemplazan versiones predeterminadas futuras,
+pero se conservan las anteriores para no alterar el historial.
 
 La importación acepta CSV y XLSX de hasta 5 MB y 20.000 filas. El archivo requiere
 `legajo` y `fecha_hora`, o `legajo`, `fecha` y `hora`; `tipo` (ENTRADA/SALIDA o E/S)
