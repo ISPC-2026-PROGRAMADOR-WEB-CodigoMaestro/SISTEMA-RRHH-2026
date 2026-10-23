@@ -140,6 +140,14 @@ class RegistroAsistencia(models.Model):
         VACACIONES = 'VACACIONES', 'Vacaciones'
         LICENCIA = 'LICENCIA', 'Licencia'
 
+    class Estado(models.TextChoices):
+        PUNTUAL = 'PUNTUAL', 'Puntual'
+        TARDE = 'TARDE', 'Tarde'
+        AUSENTE = 'AUSENTE', 'Ausente'
+        FRANCO_TRABAJADO = 'FRANCO_TRABAJADO', 'Franco trabajado'
+        FERIADO_TRABAJADO = 'FERIADO_TRABAJADO', 'Feriado trabajado'
+        SIN_HORARIO = 'SIN_HORARIO', 'Sin horario'
+
     empleado = models.ForeignKey(
         'empleados.Empleado',
         on_delete=models.CASCADE,
@@ -148,6 +156,18 @@ class RegistroAsistencia(models.Model):
     fecha = models.DateField()
     hora_ingreso = models.TimeField(null=True, blank=True)
     hora_egreso = models.TimeField(null=True, blank=True)
+    horario_diario = models.ForeignKey(
+        'horarios_laborales.HorarioDiario',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='registros_asistencia',
+    )
+    estado = models.CharField(
+        max_length=20,
+        choices=Estado.choices,
+        default=Estado.SIN_HORARIO,
+    )
     tipo = models.CharField(max_length=15, choices=Tipo.choices, default=Tipo.PRESENTE)
     minutos_tardanza = models.PositiveIntegerField(default=0)
     minutos_extra = models.PositiveIntegerField(default=0)
@@ -173,71 +193,18 @@ class RegistroAsistencia(models.Model):
     def __str__(self):
         return f'{self.empleado.legajo} | {self.fecha} | {self.get_tipo_display()}'
 
-    def calcular_metricas_jornada(self):
-        asignacion = (
-            AsignacionJornada.objects.filter(empleado=self.empleado, jornada__activa=True)
-            .select_related('jornada')
-            .first()
-        )
-        jornada = asignacion.jornada if asignacion else (
-            Jornada.objects.filter(es_predeterminada=True, activa=True).first()
-        )
-        if jornada and jornada.hora_entrada and jornada.hora_salida:
-            hora_inicio = jornada.hora_entrada
-            hora_fin = jornada.hora_salida
-            tolerancia = jornada.tolerancia_minutos
-        else:
-            jornada = (
-                Jornada.objects.filter(
-                    empleado=self.empleado,
-                    dia_semana=self.fecha.weekday(),
-                    vigencia_desde__lte=self.fecha,
-                    activa=True,
-                    turno__activo=True,
-                )
-                .filter(
-                    models.Q(vigencia_hasta__isnull=True)
-                    | models.Q(vigencia_hasta__gte=self.fecha)
-                )
-                .select_related('turno')
-                .order_by('-vigencia_desde')
-                .first()
-            )
-            if jornada is None or jornada.turno is None:
-                return
-            hora_inicio = jornada.turno.hora_inicio
-            hora_fin = jornada.turno.hora_fin
-            tolerancia = jornada.turno.minutos_tolerancia
-
-        if jornada is None:
-            return
-
-        inicio = hora_inicio.hour * 60 + hora_inicio.minute
-        fin = hora_fin.hour * 60 + hora_fin.minute
-        ingreso = self.hora_ingreso.hour * 60 + self.hora_ingreso.minute if self.hora_ingreso else None
-        egreso = self.hora_egreso.hour * 60 + self.hora_egreso.minute if self.hora_egreso else None
-
-        turno_nocturno = fin <= inicio
-        if turno_nocturno:
-            fin += 24 * 60
-        if turno_nocturno and ingreso is not None and ingreso < inicio:
-            ingreso += 24 * 60
-        if turno_nocturno and egreso is not None and egreso < inicio:
-            egreso += 24 * 60
-
-        self.minutos_tardanza = (
-            max(0, ingreso - inicio - tolerancia)
-            if ingreso is not None else 0
-        )
-        self.minutos_extra = max(0, egreso - fin) if egreso is not None else 0
-
     def save(self, *args, **kwargs):
-        if self.tipo not in (
-            self.Tipo.FERIADO,
-            self.Tipo.HOME_OFFICE,
-            self.Tipo.HORA_EXTRA,
-        ):
-            self.calcular_metricas_jornada()
+        from .services import calcular_novedades
+
+        calcular_novedades(self)
+        if kwargs.get('update_fields') is not None:
+            kwargs['update_fields'] = set(kwargs['update_fields']) | {
+                'estado',
+                'horario_diario',
+                'minutos_tardanza',
+                'minutos_extra',
+                'tipo',
+            }
         super().save(*args, **kwargs)
 
 

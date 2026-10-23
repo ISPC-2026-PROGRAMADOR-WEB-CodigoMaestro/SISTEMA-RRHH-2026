@@ -47,6 +47,7 @@ LOCAL_APPS = [
     'apps.organizacion',
     'apps.puestos',
     'apps.asistencia',
+    'apps.horarios_laborales',
     'apps.licencias',
     'apps.evaluaciones',
     'apps.sanciones',

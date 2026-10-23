@@ -15,6 +15,7 @@ from rest_framework.test import APIClient
 
 from apps.accounts.models import PerfilUsuario
 from apps.empleados.models import Empleado
+from apps.horarios_laborales.models import ConfiguracionAsistencia, HorarioDiario
 from apps.licencias.models import SolicitudLicencia, TipoLicencia
 
 from .models import (
@@ -26,9 +27,11 @@ from .models import (
     Turno,
 )
 from .services import (
+    calcular_novedades,
     cerrar_dia,
     consolidar_dia,
     importar_marcaciones,
+    obtener_horario_esperado,
     registrar_marcacion,
 )
 
@@ -131,6 +134,809 @@ class MarcacionesFixtureMixin:
             ))
         Marcacion.objects.bulk_create(marcas)
         return consolidar_dia(self.empleado, dia)
+
+
+class CaracterizacionAsistenciaTests(MarcacionesFixtureMixin, TestCase):
+    def setUp(self):
+        super().setUp()
+        self.lunes = date(2026, 10, 12)
+        self.turno = Turno.objects.create(
+            nombre='Turno caracterización',
+            hora_inicio=time(9),
+            hora_fin=time(18),
+            minutos_tolerancia=10,
+        )
+
+    def agregar_marcaciones(self, dia, marcaciones):
+        creadas = []
+        for hora, tipo in marcaciones:
+            momento = hora if isinstance(hora, datetime) else self.momento(dia, hora)
+            creadas.append(Marcacion.objects.create(
+                empleado=self.empleado,
+                fecha_hora=momento,
+                tipo=tipo,
+                origen=Marcacion.Origen.MANUAL,
+            ))
+        return creadas
+
+    def asignar_turno_semanal(self, dia, turno=None):
+        AsignacionJornada.objects.filter(empleado=self.empleado).delete()
+        self.empleado.refresh_from_db()
+        return Jornada.objects.create(
+            empleado=self.empleado,
+            turno=turno or self.turno,
+            dia_semana=dia.weekday(),
+            vigencia_desde=date(2020, 1, 1),
+        )
+
+    def crear_solicitud(self, empleado, dia, descuenta_vacaciones, estado):
+        tipo = TipoLicencia.objects.create(
+            codigo=f'CARACT-{empleado.legajo}',
+            nombre='Vacaciones' if descuenta_vacaciones else 'Licencia',
+            descuenta_vacaciones=descuenta_vacaciones,
+        )
+        return SolicitudLicencia.objects.create(
+            empleado=empleado,
+            tipo_licencia=tipo,
+            fecha_inicio=dia,
+            fecha_fin=dia,
+            dias_solicitados=Decimal('1'),
+            estado=estado,
+        )
+
+    def test_caract_tolerancia_jornada_limite_y_un_minuto_despues(self):
+        """documenta comportamiento actual"""
+        limite = RegistroAsistencia.objects.create(
+            empleado=self.empleado,
+            fecha=self.lunes,
+            hora_ingreso=time(9, 10),
+        )
+        excedido = RegistroAsistencia.objects.create(
+            empleado=self.empleado,
+            fecha=self.lunes + timedelta(days=1),
+            hora_ingreso=time(9, 11),
+        )
+        self.agregar_marcaciones(
+            self.lunes + timedelta(days=2),
+            [(time(9, 10), Marcacion.Tipo.ENTRADA)],
+        )
+        consolidado_limite = consolidar_dia(
+            self.empleado,
+            self.lunes + timedelta(days=2),
+        )
+        self.agregar_marcaciones(
+            self.lunes + timedelta(days=3),
+            [(time(9, 11), Marcacion.Tipo.ENTRADA)],
+        )
+        consolidado_excedido = consolidar_dia(
+            self.empleado,
+            self.lunes + timedelta(days=3),
+        )
+
+        self.assertEqual(limite.minutos_tardanza, 0)
+        self.assertEqual(excedido.minutos_tardanza, 1)
+        self.assertEqual(consolidado_limite.minutos_tardanza, 0)
+        self.assertEqual(consolidado_excedido.minutos_tardanza, 1)
+
+    def test_caract_tolerancia_turno_limite_y_un_minuto_despues(self):
+        """documenta comportamiento actual"""
+        for delta in range(4):
+            self.asignar_turno_semanal(self.lunes + timedelta(days=delta))
+
+        limite_modelo = RegistroAsistencia.objects.create(
+            empleado=self.empleado,
+            fecha=self.lunes,
+            hora_ingreso=time(9, 10),
+        )
+        excedido_modelo = RegistroAsistencia.objects.create(
+            empleado=self.empleado,
+            fecha=self.lunes + timedelta(days=1),
+            hora_ingreso=time(9, 11),
+        )
+        dia_limite_service = self.lunes + timedelta(days=2)
+        dia_excedido_service = self.lunes + timedelta(days=3)
+        self.agregar_marcaciones(
+            dia_limite_service,
+            [(time(9, 10), Marcacion.Tipo.ENTRADA)],
+        )
+        self.agregar_marcaciones(
+            dia_excedido_service,
+            [(time(9, 11), Marcacion.Tipo.ENTRADA)],
+        )
+        consolidado_limite = consolidar_dia(self.empleado, dia_limite_service)
+        consolidado_excedido = consolidar_dia(self.empleado, dia_excedido_service)
+
+        self.assertEqual(limite_modelo.minutos_tardanza, 0)
+        self.assertEqual(excedido_modelo.minutos_tardanza, 1)
+        self.assertEqual(consolidado_limite.minutos_tardanza, 0)
+        self.assertEqual(consolidado_excedido.minutos_tardanza, 1)
+
+    def test_caract_tardanza_save_y_consolidacion_descuentan_tolerancia(self):
+        """documenta comportamiento actual"""
+        fecha_modelo = self.lunes
+        fecha_service = self.lunes + timedelta(days=1)
+        modelo = RegistroAsistencia.objects.create(
+            empleado=self.empleado,
+            fecha=fecha_modelo,
+            hora_ingreso=time(9, 20),
+        )
+        self.agregar_marcaciones(
+            fecha_service,
+            [(time(9, 20), Marcacion.Tipo.ENTRADA)],
+        )
+        registro = consolidar_dia(self.empleado, fecha_service)
+
+        self.assertEqual(modelo.minutos_tardanza, 10)
+        self.assertEqual(registro.minutos_tardanza, 10)
+        self.assertEqual(registro.tipo, RegistroAsistencia.Tipo.TARDANZA)
+
+    def test_caract_exceso_positivo_cuenta_todos_los_minutos(self):
+        """documenta comportamiento actual"""
+        modelo = RegistroAsistencia.objects.create(
+            empleado=self.empleado,
+            fecha=self.lunes,
+            hora_ingreso=time(9),
+            hora_egreso=time(18, 15),
+        )
+        dia_service = self.lunes + timedelta(days=1)
+        self.agregar_marcaciones(
+            dia_service,
+            [
+                (time(9), Marcacion.Tipo.ENTRADA),
+                (time(18, 15), Marcacion.Tipo.SALIDA),
+            ],
+        )
+        registro = consolidar_dia(self.empleado, dia_service)
+
+        self.assertEqual(modelo.minutos_extra, 15)
+        self.assertEqual(registro.minutos_extra, 15)
+
+    def test_caract_retiro_diurno_y_salida_exacta(self):
+        """documenta comportamiento actual"""
+        dia_retiro = self.lunes
+        dia_salida_exacta = self.lunes + timedelta(days=1)
+        self.agregar_marcaciones(
+            dia_retiro,
+            [
+                (time(9), Marcacion.Tipo.ENTRADA),
+                (time(17, 59), Marcacion.Tipo.SALIDA),
+            ],
+        )
+        self.agregar_marcaciones(
+            dia_salida_exacta,
+            [
+                (time(9), Marcacion.Tipo.ENTRADA),
+                (time(18), Marcacion.Tipo.SALIDA),
+            ],
+        )
+        retiro = consolidar_dia(self.empleado, dia_retiro)
+        exacto = consolidar_dia(self.empleado, dia_salida_exacta)
+
+        self.assertEqual(retiro.tipo, RegistroAsistencia.Tipo.RETIRO_ANTICIPADO)
+        self.assertEqual(exacto.tipo, RegistroAsistencia.Tipo.PRESENTE)
+
+    def test_caract_tardanza_prevalece_sobre_retiro(self):
+        """documenta comportamiento actual"""
+        self.agregar_marcaciones(
+            self.lunes,
+            [
+                (time(9, 12), Marcacion.Tipo.ENTRADA),
+                (time(17, 59), Marcacion.Tipo.SALIDA),
+            ],
+        )
+        registro = consolidar_dia(self.empleado, self.lunes)
+
+        self.assertEqual(registro.minutos_tardanza, 2)
+        self.assertEqual(registro.tipo, RegistroAsistencia.Tipo.TARDANZA)
+
+    def test_caract_feriado_sin_fichaje_no_genera_ausencia(self):
+        """documenta comportamiento actual"""
+        Feriado.objects.create(fecha=self.lunes, nombre='Feriado de caracterización')
+
+        cerrar_dia(self.lunes)
+
+        self.assertFalse(RegistroAsistencia.objects.filter(
+            empleado=self.empleado,
+            fecha=self.lunes,
+        ).exists())
+
+    def test_caract_feriado_con_fichaje_cuenta_todo_el_trabajo_como_extra(self):
+        """documenta comportamiento actual"""
+        Feriado.objects.create(fecha=self.lunes, nombre='Feriado de caracterización')
+        self.agregar_marcaciones(
+            self.lunes,
+            [
+                (time(9), Marcacion.Tipo.ENTRADA),
+                (time(18), Marcacion.Tipo.SALIDA),
+            ],
+        )
+
+        cerrar_dia(self.lunes)
+        registro = RegistroAsistencia.objects.get(
+            empleado=self.empleado,
+            fecha=self.lunes,
+        )
+
+        self.assertEqual(registro.tipo, RegistroAsistencia.Tipo.PRESENTE)
+        self.assertEqual(registro.minutos_extra, 540)
+
+    def test_caract_licencia_sin_fichaje_crea_tipo_licencia(self):
+        """documenta comportamiento actual"""
+        self.crear_solicitud(
+            self.empleado,
+            self.lunes,
+            descuenta_vacaciones=False,
+            estado=SolicitudLicencia.Estado.APROBADA,
+        )
+
+        cerrar_dia(self.lunes)
+        registro = RegistroAsistencia.objects.get(
+            empleado=self.empleado,
+            fecha=self.lunes,
+        )
+
+        self.assertEqual(registro.tipo, RegistroAsistencia.Tipo.LICENCIA)
+
+    def test_caract_licencia_con_fichaje_conserva_tipo_protegido(self):
+        """documenta comportamiento actual"""
+        self.crear_solicitud(
+            self.empleado,
+            self.lunes,
+            descuenta_vacaciones=False,
+            estado=SolicitudLicencia.Estado.APROBADA,
+        )
+        self.agregar_marcaciones(
+            self.lunes,
+            [(time(9), Marcacion.Tipo.ENTRADA)],
+        )
+
+        cerrar_dia(self.lunes)
+        registro = RegistroAsistencia.objects.get(
+            empleado=self.empleado,
+            fecha=self.lunes,
+        )
+
+        self.assertEqual(registro.tipo, RegistroAsistencia.Tipo.LICENCIA)
+        self.assertIn('durante una solicitud de licencia o vacaciones', registro.observaciones)
+
+    def test_caract_vacaciones_con_fichaje_conserva_tipo_protegido(self):
+        """documenta comportamiento actual"""
+        self.crear_solicitud(
+            self.empleado,
+            self.lunes,
+            descuenta_vacaciones=True,
+            estado=SolicitudLicencia.Estado.APROBADA,
+        )
+        self.agregar_marcaciones(
+            self.lunes,
+            [(time(9), Marcacion.Tipo.ENTRADA)],
+        )
+
+        cerrar_dia(self.lunes)
+        registro = RegistroAsistencia.objects.get(
+            empleado=self.empleado,
+            fecha=self.lunes,
+        )
+
+        self.assertEqual(registro.tipo, RegistroAsistencia.Tipo.VACACIONES)
+        self.assertIn('durante una solicitud de licencia o vacaciones', registro.observaciones)
+
+    def test_caract_solicitudes_pendiente_y_rechazada_se_aplican_al_cerrar(self):
+        """documenta comportamiento actual"""
+        pendiente = self.crear_empleado('C-PEND', 'C-PEND')
+        rechazada = self.crear_empleado('C-RECH', 'C-RECH')
+        self.crear_solicitud(
+            pendiente,
+            self.lunes,
+            descuenta_vacaciones=False,
+            estado=SolicitudLicencia.Estado.PENDIENTE,
+        )
+        self.crear_solicitud(
+            rechazada,
+            self.lunes,
+            descuenta_vacaciones=False,
+            estado=SolicitudLicencia.Estado.RECHAZADA,
+        )
+
+        cerrar_dia(self.lunes)
+
+        self.assertEqual(
+            RegistroAsistencia.objects.get(empleado=pendiente, fecha=self.lunes).tipo,
+            RegistroAsistencia.Tipo.LICENCIA,
+        )
+        self.assertEqual(
+            RegistroAsistencia.objects.get(empleado=rechazada, fecha=self.lunes).tipo,
+            RegistroAsistencia.Tipo.LICENCIA,
+        )
+
+    def test_caract_cierre_genera_ausente_con_horario_y_sin_fichaje(self):
+        """documenta comportamiento actual"""
+        cerrar_dia(self.lunes)
+
+        registro = RegistroAsistencia.objects.get(
+            empleado=self.empleado,
+            fecha=self.lunes,
+        )
+        self.assertEqual(registro.tipo, RegistroAsistencia.Tipo.AUSENTE)
+
+    def test_caract_sin_horario_con_fichaje_consolida_presente_sin_metricas(self):
+        """documenta comportamiento actual"""
+        empleado = self.crear_empleado('C-SIN-HORARIO', 'C-SIN-HORARIO')
+        dia = self.lunes
+        self.agregar_marcaciones(
+            dia,
+            [
+                (time(9), Marcacion.Tipo.ENTRADA),
+                (time(18), Marcacion.Tipo.SALIDA),
+            ],
+        )
+        Marcacion.objects.filter(empleado=self.empleado).update(empleado=empleado)
+
+        registro = consolidar_dia(empleado, dia)
+
+        self.assertEqual(registro.tipo, RegistroAsistencia.Tipo.PRESENTE)
+        self.assertEqual(registro.minutos_tardanza, 0)
+        self.assertEqual(registro.minutos_extra, 0)
+
+    def test_caract_sin_horario_sin_fichaje_no_crea_consolidacion_pero_cierre_si(self):
+        """documenta comportamiento actual"""
+        empleado = self.crear_empleado('C-SIN-MARCA', 'C-SIN-MARCA')
+
+        self.assertIsNone(consolidar_dia(empleado, self.lunes))
+        self.assertFalse(RegistroAsistencia.objects.filter(
+            empleado=empleado,
+            fecha=self.lunes,
+        ).exists())
+
+        cerrar_dia(self.lunes)
+
+        self.assertEqual(
+            RegistroAsistencia.objects.get(empleado=empleado, fecha=self.lunes).tipo,
+            RegistroAsistencia.Tipo.AUSENTE,
+        )
+
+    def test_caract_franco_semanal_sin_fichaje_crea_ausente_en_dia_habil(self):
+        """documenta comportamiento actual"""
+        self.asignar_turno_semanal(self.lunes)
+        dia_franco = self.lunes + timedelta(days=1)
+
+        cerrar_dia(dia_franco)
+
+        self.assertEqual(
+            RegistroAsistencia.objects.get(
+                empleado=self.empleado,
+                fecha=dia_franco,
+            ).tipo,
+            RegistroAsistencia.Tipo.AUSENTE,
+        )
+
+    def test_caract_franco_semanal_con_fichaje_se_consolida_sin_horario(self):
+        """documenta comportamiento actual"""
+        self.asignar_turno_semanal(self.lunes)
+        dia_franco = self.lunes + timedelta(days=1)
+        self.agregar_marcaciones(
+            dia_franco,
+            [
+                (time(9), Marcacion.Tipo.ENTRADA),
+                (time(18), Marcacion.Tipo.SALIDA),
+            ],
+        )
+
+        registro = consolidar_dia(self.empleado, dia_franco)
+
+        self.assertEqual(registro.tipo, RegistroAsistencia.Tipo.PRESENTE)
+        self.assertEqual(registro.minutos_tardanza, 0)
+        self.assertEqual(registro.minutos_extra, 0)
+
+    def test_caract_hextra_y_feriado_recalculan_metricas_home_las_conserva(self):
+        """documenta comportamiento actual"""
+        tipos = (
+            RegistroAsistencia.Tipo.HORA_EXTRA,
+            RegistroAsistencia.Tipo.HOME_OFFICE,
+            RegistroAsistencia.Tipo.FERIADO,
+        )
+        registros = []
+        for offset, tipo in enumerate(tipos):
+            dia = self.lunes + timedelta(days=offset)
+            registro = RegistroAsistencia.objects.create(
+                empleado=self.empleado,
+                fecha=dia,
+                tipo=tipo,
+            )
+            self.agregar_marcaciones(
+                dia,
+                [
+                    (time(9, 20), Marcacion.Tipo.ENTRADA),
+                    (time(18, 30), Marcacion.Tipo.SALIDA),
+                ],
+            )
+            consolidar_dia(self.empleado, dia)
+            registro.refresh_from_db()
+            registros.append(registro)
+
+        self.assertEqual([registro.tipo for registro in registros], list(tipos))
+        self.assertEqual(registros[0].minutos_tardanza, 10)
+        self.assertEqual(registros[0].minutos_extra, 30)
+        self.assertEqual(registros[1].minutos_tardanza, 0)
+        self.assertEqual(registros[1].minutos_extra, 0)
+        self.assertEqual(registros[2].minutos_tardanza, 10)
+        self.assertEqual(registros[2].minutos_extra, 550)
+
+    def test_caract_ausente_existente_pasa_a_presente_con_fichaje(self):
+        """documenta comportamiento actual"""
+        registro = RegistroAsistencia.objects.create(
+            empleado=self.empleado,
+            fecha=self.lunes,
+            tipo=RegistroAsistencia.Tipo.AUSENTE,
+        )
+        self.agregar_marcaciones(
+            self.lunes,
+            [(time(9), Marcacion.Tipo.ENTRADA)],
+        )
+
+        consolidar_dia(self.empleado, self.lunes)
+        registro.refresh_from_db()
+
+        self.assertEqual(registro.tipo, RegistroAsistencia.Tipo.PRESENTE)
+
+    def test_caract_solo_entrada_y_solo_salida_se_tratan_como_entrada(self):
+        """documenta comportamiento actual"""
+        self.agregar_marcaciones(
+            self.lunes,
+            [(time(9), Marcacion.Tipo.ENTRADA)],
+        )
+        entrada = consolidar_dia(self.empleado, self.lunes)
+
+        fecha_salida = self.lunes + timedelta(days=1)
+        self.agregar_marcaciones(
+            fecha_salida,
+            [(time(18), Marcacion.Tipo.SALIDA)],
+        )
+        salida = consolidar_dia(self.empleado, fecha_salida)
+
+        self.assertEqual(entrada.hora_ingreso, time(9))
+        self.assertIsNone(entrada.hora_egreso)
+        self.assertEqual(salida.hora_ingreso, time(18))
+        self.assertIsNone(salida.hora_egreso)
+
+    def test_caract_varios_pares_usa_primera_y_ultima_marca(self):
+        """documenta comportamiento actual"""
+        self.agregar_marcaciones(
+            self.lunes,
+            [
+                (time(9), Marcacion.Tipo.ENTRADA),
+                (time(12), Marcacion.Tipo.SALIDA),
+                (time(13), Marcacion.Tipo.ENTRADA),
+                (time(18), Marcacion.Tipo.SALIDA),
+            ],
+        )
+
+        registro = consolidar_dia(self.empleado, self.lunes)
+
+        self.assertEqual(registro.hora_ingreso, time(9))
+        self.assertEqual(registro.hora_egreso, time(18))
+
+    def test_caract_consolidar_mismo_dia_es_idempotente(self):
+        """documenta comportamiento actual"""
+        self.agregar_marcaciones(
+            self.lunes,
+            [
+                (time(9, 12), Marcacion.Tipo.ENTRADA),
+                (time(18, 15), Marcacion.Tipo.SALIDA),
+            ],
+        )
+
+        primero = consolidar_dia(self.empleado, self.lunes)
+        primera_foto = (
+            primero.hora_ingreso,
+            primero.hora_egreso,
+            primero.tipo,
+            primero.minutos_tardanza,
+            primero.minutos_extra,
+            primero.observaciones,
+        )
+        segundo = consolidar_dia(self.empleado, self.lunes)
+        segunda_foto = (
+            segundo.hora_ingreso,
+            segundo.hora_egreso,
+            segundo.tipo,
+            segundo.minutos_tardanza,
+            segundo.minutos_extra,
+            segundo.observaciones,
+        )
+
+        self.assertEqual(primera_foto, segunda_foto)
+
+    def test_caract_turno_nocturno_save_calcula_tardanza_y_extra(self):
+        """documenta comportamiento actual"""
+        Jornada.objects.filter(pk=self.jornada.pk).update(
+            hora_entrada=time(22),
+            hora_salida=time(6),
+        )
+        self.jornada.refresh_from_db()
+        self.empleado.refresh_from_db()
+        registro = RegistroAsistencia.objects.create(
+            empleado=self.empleado,
+            fecha=self.lunes,
+            hora_ingreso=time(22, 12),
+            hora_egreso=time(6, 20),
+        )
+
+        self.assertEqual(registro.minutos_tardanza, 2)
+        self.assertEqual(registro.minutos_extra, 20)
+
+    def test_caract_turno_nocturno_consolidacion_incluye_salida_del_dia_siguiente(self):
+        """documenta comportamiento actual"""
+        turno = Turno.objects.create(
+            nombre='Nocturno caracterización',
+            hora_inicio=time(22),
+            hora_fin=time(6),
+            minutos_tolerancia=10,
+        )
+        self.asignar_turno_semanal(self.lunes, turno)
+        dia_siguiente = self.lunes + timedelta(days=1)
+        self.agregar_marcaciones(
+            self.lunes,
+            [(time(22, 12), Marcacion.Tipo.ENTRADA)],
+        )
+        self.agregar_marcaciones(
+            dia_siguiente,
+            [(time(6, 20), Marcacion.Tipo.SALIDA)],
+        )
+
+        registro = consolidar_dia(self.empleado, self.lunes)
+
+        self.assertEqual(registro.hora_ingreso, time(22, 12))
+        self.assertEqual(registro.hora_egreso, time(6, 20))
+        self.assertEqual(registro.minutos_tardanza, 2)
+        self.assertEqual(registro.minutos_extra, 20)
+
+    def test_caract_retiro_nocturno_bug_conocido_se_clasifica_retiro(self):
+        """documenta comportamiento actual"""
+        # BUG CONOCIDO corregido: el resultado previo era TARDANZA con métricas en cero.
+        turno = Turno.objects.create(
+            nombre='Nocturno retiro conocido',
+            hora_inicio=time(22),
+            hora_fin=time(6),
+            minutos_tolerancia=10,
+        )
+        self.asignar_turno_semanal(self.lunes, turno)
+        self.agregar_marcaciones(
+            self.lunes,
+            [
+                (time(22), Marcacion.Tipo.ENTRADA),
+                (time(23, 30), Marcacion.Tipo.SALIDA),
+            ],
+        )
+
+        registro = consolidar_dia(self.empleado, self.lunes)
+
+        self.assertEqual(registro.tipo, RegistroAsistencia.Tipo.RETIRO_ANTICIPADO)
+        self.assertEqual(registro.minutos_tardanza, 0)
+        self.assertEqual(registro.minutos_extra, 0)
+
+
+class CalculoNovedadesTests(MarcacionesFixtureMixin, TestCase):
+    def setUp(self):
+        super().setUp()
+        self.lunes = date(2026, 10, 12)
+
+    def test_horario_diario_prevalece_y_usa_tolerancia_global(self):
+        config = ConfiguracionAsistencia.objects.create(
+            tolerancia_tardanza_minutos=10,
+            minimo_extra_minutos=30,
+        )
+        horario = HorarioDiario.objects.create(
+            empleado=self.empleado,
+            fecha=self.lunes,
+            hora_entrada=time(10),
+            hora_salida=time(19),
+        )
+
+        esperado = obtener_horario_esperado(self.empleado, self.lunes)
+        registro = RegistroAsistencia.objects.create(
+            empleado=self.empleado,
+            fecha=self.lunes,
+            hora_ingreso=time(10, 15),
+            hora_egreso=time(19, 45),
+        )
+
+        self.assertEqual(esperado.fuente, 'diario')
+        self.assertEqual(esperado.inicio.time(), time(10))
+        self.assertEqual(esperado.fin.time(), time(19))
+        self.assertTrue(timezone.is_aware(esperado.inicio))
+        self.assertEqual(registro.horario_diario, horario)
+        self.assertEqual(registro.minutos_tardanza, 5)
+        self.assertEqual(registro.minutos_extra, 45)
+        self.assertEqual(registro.estado, RegistroAsistencia.Estado.TARDE)
+        self.assertEqual(config.pk, 1)
+
+    def test_horario_diario_aplica_minimo_de_extra_de_30_minutos(self):
+        ConfiguracionAsistencia.objects.create(minimo_extra_minutos=30)
+        horarios = []
+        for delta in (0, 1):
+            horarios.append(HorarioDiario.objects.create(
+                empleado=self.empleado,
+                fecha=self.lunes + timedelta(days=delta),
+                hora_entrada=time(9),
+                hora_salida=time(18),
+            ))
+
+        bajo = RegistroAsistencia.objects.create(
+            empleado=self.empleado,
+            fecha=horarios[0].fecha,
+            hora_ingreso=time(9),
+            hora_egreso=time(18, 29),
+        )
+        en_limite = RegistroAsistencia.objects.create(
+            empleado=self.empleado,
+            fecha=horarios[1].fecha,
+            hora_ingreso=time(9),
+            hora_egreso=time(18, 30),
+        )
+
+        self.assertEqual(bajo.minutos_extra, 0)
+        self.assertEqual(en_limite.minutos_extra, 30)
+
+    def test_franco_trabajado_cuenta_toda_la_duracion(self):
+        fecha_franco = self.lunes
+        HorarioDiario.objects.create(
+            empleado=self.empleado,
+            fecha=fecha_franco,
+            es_franco=True,
+        )
+        registro = RegistroAsistencia.objects.create(
+            empleado=self.empleado,
+            fecha=fecha_franco,
+            hora_ingreso=time(9),
+            hora_egreso=time(17, 45),
+        )
+
+        self.assertEqual(registro.estado, RegistroAsistencia.Estado.FRANCO_TRABAJADO)
+        self.assertEqual(registro.minutos_extra, 525)
+
+    def test_feriado_prevalece_sobre_franco_y_conserva_tardanza(self):
+        Feriado.objects.create(fecha=self.lunes, nombre='Feriado')
+        HorarioDiario.objects.create(
+            empleado=self.empleado,
+            fecha=self.lunes,
+            es_franco=True,
+        )
+        registro = RegistroAsistencia.objects.create(
+            empleado=self.empleado,
+            fecha=self.lunes,
+            hora_ingreso=time(9),
+            hora_egreso=time(17, 45),
+        )
+
+        self.assertEqual(registro.estado, RegistroAsistencia.Estado.FERIADO_TRABAJADO)
+        self.assertEqual(registro.minutos_extra, 525)
+
+    def test_feriado_trabajado_con_horario_mantiene_tardanza_y_todo_como_extra(self):
+        Feriado.objects.create(fecha=self.lunes, nombre='Feriado')
+        registro = RegistroAsistencia.objects.create(
+            empleado=self.empleado,
+            fecha=self.lunes,
+            hora_ingreso=time(9, 20),
+            hora_egreso=time(18, 15),
+        )
+
+        self.assertEqual(registro.estado, RegistroAsistencia.Estado.FERIADO_TRABAJADO)
+        self.assertEqual(registro.tipo, RegistroAsistencia.Tipo.TARDANZA)
+        self.assertEqual(registro.minutos_tardanza, 10)
+        self.assertEqual(registro.minutos_extra, 535)
+
+    def test_registro_sin_horario_no_se_convierte_en_ausente(self):
+        empleado = self.crear_empleado('N-100', 'N-100')
+        registro = RegistroAsistencia.objects.create(
+            empleado=empleado,
+            fecha=self.lunes,
+            tipo=RegistroAsistencia.Tipo.AUSENTE,
+        )
+
+        self.assertEqual(registro.tipo, RegistroAsistencia.Tipo.AUSENTE)
+        self.assertEqual(registro.estado, RegistroAsistencia.Estado.SIN_HORARIO)
+        self.assertEqual(registro.minutos_tardanza, 0)
+        self.assertEqual(registro.minutos_extra, 0)
+
+    def test_editar_y_borrar_horario_diario_recalcula_registro(self):
+        ConfiguracionAsistencia.objects.create(minimo_extra_minutos=30)
+        registro = RegistroAsistencia.objects.create(
+            empleado=self.empleado,
+            fecha=self.lunes,
+            hora_ingreso=time(10, 20),
+            hora_egreso=time(19, 45),
+        )
+        self.assertEqual(registro.minutos_tardanza, 70)
+        self.assertEqual(registro.minutos_extra, 105)
+
+        horario = HorarioDiario.objects.create(
+            empleado=self.empleado,
+            fecha=self.lunes,
+            hora_entrada=time(10),
+            hora_salida=time(19),
+        )
+        registro.refresh_from_db()
+        self.assertEqual(registro.horario_diario, horario)
+        self.assertEqual(registro.minutos_tardanza, 10)
+        self.assertEqual(registro.minutos_extra, 45)
+
+        horario.hora_entrada = time(10, 15)
+        horario.save()
+        registro.refresh_from_db()
+        self.assertEqual(registro.minutos_tardanza, 0)
+        self.assertEqual(registro.estado, RegistroAsistencia.Estado.PUNTUAL)
+
+        horario.delete()
+        registro.refresh_from_db()
+        self.assertIsNone(registro.horario_diario)
+        self.assertEqual(registro.minutos_tardanza, 70)
+        self.assertEqual(registro.minutos_extra, 105)
+
+    def test_calculo_es_idempotente_y_tardanza_no_oculta_extra(self):
+        registro = RegistroAsistencia(
+            empleado=self.empleado,
+            fecha=self.lunes,
+            hora_ingreso=time(9, 20),
+            hora_egreso=time(18, 30),
+        )
+        calcular_novedades(registro)
+        primero = (
+            registro.tipo,
+            registro.estado,
+            registro.minutos_tardanza,
+            registro.minutos_extra,
+        )
+        calcular_novedades(registro)
+        segundo = (
+            registro.tipo,
+            registro.estado,
+            registro.minutos_tardanza,
+            registro.minutos_extra,
+        )
+
+        self.assertEqual(primero, segundo)
+        self.assertEqual(registro.tipo, RegistroAsistencia.Tipo.TARDANZA)
+        self.assertEqual(registro.estado, RegistroAsistencia.Estado.TARDE)
+        self.assertEqual(registro.minutos_tardanza, 10)
+        self.assertEqual(registro.minutos_extra, 30)
+
+    def test_configuracion_obtener_es_singleton(self):
+        primera = ConfiguracionAsistencia.obtener()
+        segunda = ConfiguracionAsistencia.obtener()
+
+        self.assertEqual(primera.pk, 1)
+        self.assertEqual(segunda.pk, 1)
+        self.assertEqual(ConfiguracionAsistencia.objects.count(), 1)
+
+    def test_comando_recalcular_dry_run_no_guarda_y_recalculo_persiste(self):
+        registro = RegistroAsistencia.objects.create(
+            empleado=self.empleado,
+            fecha=self.lunes,
+            hora_ingreso=time(9),
+            hora_egreso=time(18),
+        )
+        RegistroAsistencia.objects.filter(pk=registro.pk).update(minutos_tardanza=99)
+        salida = io.StringIO()
+
+        call_command(
+            'recalcular_asistencias',
+            desde=self.lunes.isoformat(),
+            hasta=self.lunes.isoformat(),
+            dry_run=True,
+            stdout=salida,
+        )
+        registro.refresh_from_db()
+        self.assertIn('1 registros cambiarían', salida.getvalue())
+        self.assertEqual(registro.minutos_tardanza, 99)
+
+        call_command(
+            'recalcular_asistencias',
+            desde=self.lunes.isoformat(),
+            hasta=self.lunes.isoformat(),
+        )
+        registro.refresh_from_db()
+        self.assertEqual(registro.minutos_tardanza, 0)
 
 
 class MarcacionesServiceTests(MarcacionesFixtureMixin, TestCase):
@@ -340,7 +1146,7 @@ class MarcacionesServiceTests(MarcacionesFixtureMixin, TestCase):
 
         self.assertEqual(resumen['consolidados'], 1)
         self.assertEqual(Marcacion.objects.filter(empleado=self.empleado).count(), 1)
-        self.assertEqual(registro.tipo, RegistroAsistencia.Tipo.PRESENTE)
+        self.assertEqual(registro.tipo, RegistroAsistencia.Tipo.LICENCIA)
         self.assertIn(
             'Marcación realizada durante una solicitud de licencia o vacaciones.',
             registro.observaciones,

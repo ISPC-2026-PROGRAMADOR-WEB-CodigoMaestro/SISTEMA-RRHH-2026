@@ -133,16 +133,41 @@ class FeriadoSerializer(serializers.ModelSerializer):
 class RegistroAsistenciaSerializer(serializers.ModelSerializer):
     empleado_nombre = serializers.CharField(source='empleado.nombre_completo', read_only=True)
     tipo_display = serializers.CharField(source='get_tipo_display', read_only=True)
+    estado_display = serializers.CharField(source='get_estado_display', read_only=True)
+    horario_esperado = serializers.SerializerMethodField()
+
+    def get_horario_esperado(self, registro):
+        from .services import obtener_horario_esperado
+
+        esperado = obtener_horario_esperado(registro.empleado, registro.fecha)
+        if esperado is None:
+            return None
+        return {
+            'inicio': esperado.inicio,
+            'fin': esperado.fin,
+            'es_franco': esperado.es_franco,
+            'fuente': esperado.fuente,
+        }
 
     class Meta:
         model = RegistroAsistencia
         fields = [
             'id', 'empleado', 'empleado_nombre', 'fecha', 'hora_ingreso',
-            'hora_egreso', 'tipo', 'tipo_display', 'minutos_tardanza',
+            'hora_egreso', 'horario_diario', 'horario_esperado', 'estado',
+            'estado_display', 'tipo', 'tipo_display', 'minutos_tardanza',
             'minutos_extra', 'justificado', 'justificacion', 'observaciones',
             'cargado_por', 'fecha_carga', 'fecha_actualizacion',
         ]
-        read_only_fields = ['cargado_por', 'fecha_carga', 'fecha_actualizacion']
+        read_only_fields = [
+            'horario_diario',
+            'horario_esperado',
+            'estado',
+            'minutos_tardanza',
+            'minutos_extra',
+            'cargado_por',
+            'fecha_carga',
+            'fecha_actualizacion',
+        ]
 
 
 class MarcacionSerializer(serializers.ModelSerializer):

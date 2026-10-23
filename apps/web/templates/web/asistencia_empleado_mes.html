@@ -33,12 +33,23 @@
   <div class="card-header bg-white"><h3 class="h5 mb-0">Asistencia y novedades del mes</h3></div>
   <div class="table-responsive">
     <table class="table table-hover align-middle mb-0">
-      <thead><tr><th>Fecha</th><th>Tipo</th><th>Ingreso</th><th>Egreso</th><th>Tardanza</th><th>Horas extra</th><th>Observaciones / avisos</th></tr></thead>
+      <thead><tr><th>Fecha</th><th>Tipo</th><th>Horario asignado</th><th>Ingreso</th><th>Egreso</th><th>Tardanza</th><th>Horas extra</th><th>Observaciones / avisos</th></tr></thead>
       <tbody>
         {% for registro in registros %}
         <tr>
           <td>{{ registro.fecha|date:"d/m/Y" }}</td>
           <td>{{ registro.get_tipo_display }}</td>
+          <td>
+            {% if registro.horario_esperado %}
+              {% if registro.horario_esperado.es_franco %}
+                Franco
+              {% else %}
+                {{ registro.horario_esperado.inicio|time:"H:i" }}–{{ registro.horario_esperado.fin|time:"H:i" }}
+              {% endif %}
+            {% else %}
+              Sin horario asignado
+            {% endif %}
+          </td>
           <td>{{ registro.hora_ingreso|time:"H:i"|default:"—" }}</td>
           <td>{{ registro.hora_egreso|time:"H:i"|default:"—" }}</td>
           <td>{{ registro.minutos_tardanza }} min</td>
@@ -46,7 +57,7 @@
           <td>{{ registro.observaciones|default:registro.justificacion|default:"—" }}</td>
         </tr>
         {% empty %}
-        <tr><td colspan="7" class="text-center text-muted py-4">No hay registros de asistencia para este mes.</td></tr>
+        <tr><td colspan="8" class="text-center text-muted py-4">No hay registros de asistencia para este mes.</td></tr>
         {% endfor %}
       </tbody>
     </table>

@@ -1,4 +1,5 @@
 """Vistas del dashboard web (Django templates + Bootstrap)."""
+import secrets
 from datetime import date, timedelta
 from decimal import Decimal
 
@@ -6,12 +7,26 @@ from django.contrib import messages
 from django.contrib.auth import authenticate, get_user_model, login, logout
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied, ValidationError
-from django.db.models import Count
+from django.core.paginator import Paginator
+from django.db import IntegrityError, transaction
+from django.db.models import Count, Q
+from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 
 from apps.asistencia.models import Feriado, RegistroAsistencia
+from apps.asistencia.services import obtener_horario_esperado
 from apps.empleados.models import Empleado
+from apps.accounts.permissions import rol_de
+from apps.horarios_laborales.models import (
+    HorarioDiario,
+    HorarioPredeterminado,
+)
+from apps.horarios_laborales.forms import HorarioDiarioForm
+from apps.horarios_laborales.services import (
+    establecer_horario_predeterminado,
+    parsear_archivo_horarios,
+)
 from apps.incidencias.models import ComentarioIncidencia, Incidencia
 from apps.licencias.models import SaldoVacaciones, SolicitudLicencia
 from apps.licencias.services import cancelar_solicitud, dias_vacaciones_por_antiguedad
@@ -45,6 +60,328 @@ def login_view(request):
 def logout_view(request):
     logout(request)
     return redirect('web:login')
+
+
+@login_required
+def horarios_laborales(request):
+    rol = rol_de(request.user)
+    roles_con_acceso_general = ('GERENTE', 'ADMINISTRATIVO', 'LECTURA')
+    empleado = Empleado.objects.filter(usuario=request.user).first()
+    if rol not in roles_con_acceso_general and empleado is None:
+        raise PermissionDenied('El usuario no tiene un legajo de empleado vinculado.')
+
+    horarios = HorarioDiario.objects.select_related('empleado')
+    if rol not in roles_con_acceso_general:
+        horarios = horarios.filter(empleado=empleado)
+
+    puede_gestionar = rol in ('GERENTE', 'ADMINISTRATIVO')
+    errores = []
+    errores_carga = []
+    filas_previsualizadas = []
+    formulario = HorarioDiarioForm()
+    if request.method == 'POST':
+        if not puede_gestionar:
+            raise PermissionDenied('Solo GERENTE o ADMINISTRATIVO puede cargar horarios.')
+        accion = request.POST.get('accion')
+        if accion == 'crear_individual':
+            formulario = HorarioDiarioForm(request.POST)
+            if formulario.is_valid():
+                horario = formulario.save(commit=False)
+                horario.creado_por = request.user
+                try:
+                    with transaction.atomic():
+                        horario.full_clean()
+                        horario.save()
+                        tiene_predeterminado = (
+                            HorarioPredeterminado.objects.filter(
+                                empleado=horario.empleado,
+                            ).exists()
+                        )
+                        establecer_predeterminado = (
+                            formulario.cleaned_data['alcance']
+                            == 'predeterminado'
+                            or not tiene_predeterminado
+                        )
+                        if establecer_predeterminado and not horario.es_franco:
+                            establecer_horario_predeterminado(
+                                horario.empleado,
+                                horario.fecha,
+                                horario.hora_entrada,
+                                horario.hora_salida,
+                                horario.observaciones,
+                                request.user,
+                            )
+                except (ValidationError, IntegrityError) as exc:
+                    if isinstance(exc, ValidationError):
+                        formulario.add_error(None, exc)
+                    else:
+                        formulario.add_error(
+                            'fecha',
+                            'Ya existe un horario para ese empleado y fecha.',
+                        )
+                else:
+                    if establecer_predeterminado and not horario.es_franco:
+                        mensaje = (
+                            'El horario se guardó y quedó como predeterminado '
+                            'desde esa fecha.'
+                        )
+                    else:
+                        mensaje = (
+                            'El horario se guardó solo para esa fecha; después '
+                            'se aplicará el horario predeterminado.'
+                        )
+                    messages.success(request, mensaje)
+                    return redirect('web:horarios_laborales')
+        elif accion == 'previsualizar_archivo':
+            archivo = request.FILES.get('archivo_horarios')
+            if archivo is None:
+                errores_carga.append('Selecciona un archivo CSV o XLSX.')
+            else:
+                filas = []
+                try:
+                    filas, errores_carga = parsear_archivo_horarios(archivo)
+                except ValidationError as exc:
+                    errores_carga.extend(exc.messages)
+                if filas:
+                    empleados_ids = {fila['empleado_id'] for fila in filas}
+                    empleados_con_predeterminado = set(
+                        HorarioPredeterminado.objects.filter(
+                            empleado_id__in=empleados_ids,
+                        ).values_list('empleado_id', flat=True).distinct()
+                    )
+                    primera_fecha_sin_predeterminado = {}
+                    for fila in sorted(
+                        filas,
+                        key=lambda item: (item['empleado_id'], item['fecha']),
+                    ):
+                        empleado_id = fila['empleado_id']
+                        if (
+                            empleado_id not in empleados_con_predeterminado
+                            and not fila['es_franco']
+                        ):
+                            primera_fecha_sin_predeterminado.setdefault(
+                                empleado_id,
+                                fila['fecha'],
+                            )
+                    for fila in filas:
+                        fila['predeterminado_inicial'] = (
+                            not fila['es_franco']
+                            and primera_fecha_sin_predeterminado.get(
+                                fila['empleado_id'],
+                            ) == fila['fecha']
+                        )
+                    for indice, fila in enumerate(filas):
+                        fila['indice'] = indice
+                    request.session['horarios_laborales_preview'] = {
+                        'token': secrets.token_urlsafe(18),
+                        'filas': filas,
+                        'errores': errores_carga,
+                    }
+                    return redirect('web:horarios_laborales')
+        elif accion == 'confirmar_archivo':
+            preview = request.session.get('horarios_laborales_preview')
+            if (
+                not preview
+                or request.POST.get('token') != preview.get('token')
+            ):
+                errores_carga.append(
+                    'La vista previa expiró o no es válida. Vuelve a cargar el archivo.'
+                )
+            else:
+                errores_carga.extend(preview.get('errores', []))
+                creados = reemplazados = omitidos = 0
+                predeterminados_actualizados = 0
+                filas = sorted(
+                    preview.get('filas', []),
+                    key=lambda fila: (fila['empleado_id'], fila['fecha']),
+                )
+                with transaction.atomic():
+                    for fila in filas:
+                        indice = fila['indice']
+                        identidad = {
+                            'empleado_id': fila['empleado_id'],
+                            'fecha': date.fromisoformat(fila['fecha']),
+                        }
+                        reemplazar = request.POST.get(f'reemplazar_{indice}') == 'on'
+                        try:
+                            with transaction.atomic():
+                                horario = HorarioDiario.objects.filter(
+                                    **identidad
+                                ).first()
+                                if horario and not reemplazar:
+                                    omitidos += 1
+                                    continue
+                                es_nuevo = horario is None
+                                if es_nuevo:
+                                    horario = HorarioDiario(**identidad)
+                                    horario.creado_por = request.user
+                                horario.hora_entrada = (
+                                    fila['hora_entrada'] or None
+                                )
+                                horario.hora_salida = fila['hora_salida'] or None
+                                horario.es_franco = fila['es_franco']
+                                horario.observaciones = fila['observaciones']
+                                horario.full_clean()
+                                horario.save()
+                                cambiar_predeterminado = (
+                                    fila.get('predeterminado_inicial', False)
+                                    or request.POST.get(
+                                        f'predeterminado_{fila["indice"]}',
+                                    ) == 'on'
+                                )
+                                if cambiar_predeterminado and horario.es_franco:
+                                    raise ValidationError(
+                                        'Un día franco no puede convertirse '
+                                        'en horario predeterminado.'
+                                    )
+                                if cambiar_predeterminado:
+                                    establecer_horario_predeterminado(
+                                        horario.empleado,
+                                        horario.fecha,
+                                        horario.hora_entrada,
+                                        horario.hora_salida,
+                                        horario.observaciones,
+                                        request.user,
+                                    )
+                                    predeterminados_actualizados += 1
+                                if es_nuevo:
+                                    creados += 1
+                                else:
+                                    reemplazados += 1
+                        except (ValidationError, IntegrityError) as exc:
+                            errores_carga.append(
+                                f"Fila {fila['fila']}: "
+                                + (
+                                    '; '.join(exc.messages)
+                                    if isinstance(exc, ValidationError)
+                                    else 'conflicto al guardar el horario'
+                                )
+                            )
+                request.session.pop('horarios_laborales_preview', None)
+                if errores_carga:
+                    messages.warning(
+                        request,
+                        f'Carga parcial: {creados} creados, {reemplazados} '
+                        f'reemplazados, {omitidos} omitidos y '
+                        f'{predeterminados_actualizados} predeterminado(s) '
+                        'actualizado(s). Revisa los errores.',
+                    )
+                else:
+                    messages.success(
+                        request,
+                        f'Carga finalizada: {creados} creados, {reemplazados} '
+                        f'reemplazados, {omitidos} omitidos y '
+                        f'{predeterminados_actualizados} predeterminado(s) '
+                        'actualizado(s).',
+                    )
+                if errores_carga:
+                    request.session['horarios_laborales_errores'] = errores_carga
+                return redirect('web:horarios_laborales')
+        else:
+            errores_carga.append('La acción solicitada no es válida.')
+
+    carga_pendiente = request.session.pop('horarios_laborales_preview', None)
+    if carga_pendiente:
+        filas_previsualizadas = carga_pendiente['filas']
+        pares = []
+        for inicio in range(0, len(filas_previsualizadas), 100):
+            grupo = filas_previsualizadas[inicio:inicio + 100]
+            condicion = Q(pk__in=[])
+            for fila in grupo:
+                condicion |= Q(
+                    empleado_id=fila['empleado_id'],
+                    fecha=date.fromisoformat(fila['fecha']),
+                )
+            existentes = {
+                (horario.empleado_id, horario.fecha)
+                for horario in HorarioDiario.objects.filter(condicion)
+            }
+            pares.extend(existentes)
+        pares = set(pares)
+        for indice, fila in enumerate(filas_previsualizadas):
+            fila['indice'] = indice
+            fila.setdefault('predeterminado_inicial', False)
+            fila['duplicado'] = (
+                fila['empleado_id'],
+                date.fromisoformat(fila['fecha']),
+            ) in pares
+        request.session['horarios_laborales_preview'] = carga_pendiente
+        errores_carga.extend(carga_pendiente.get('errores', []))
+    errores_carga.extend(
+        request.session.pop('horarios_laborales_errores', [])
+    )
+
+    errores.extend(errores_carga)
+    fechas = {}
+    for parametro in ('fecha_desde', 'fecha_hasta'):
+        valor = request.GET.get(parametro, '')
+        fechas[parametro] = valor
+        if valor:
+            try:
+                fechas[parametro] = date.fromisoformat(valor)
+            except ValueError:
+                errores.append(f'{parametro}: usa el formato AAAA-MM-DD.')
+
+    if not errores:
+        if fechas['fecha_desde']:
+            horarios = horarios.filter(fecha__gte=fechas['fecha_desde'])
+        if fechas['fecha_hasta']:
+            horarios = horarios.filter(fecha__lte=fechas['fecha_hasta'])
+        if (
+            fechas['fecha_desde']
+            and fechas['fecha_hasta']
+            and fechas['fecha_hasta'] < fechas['fecha_desde']
+        ):
+            errores.append('La fecha hasta no puede ser anterior a la fecha desde.')
+
+    paginator = Paginator(horarios if not errores else HorarioDiario.objects.none(), 20)
+    pagina = paginator.get_page(request.GET.get('page'))
+    horarios_pagina = list(pagina.object_list)
+    condiciones_predeterminadas = Q(pk__in=[])
+    for horario in horarios_pagina:
+        condiciones_predeterminadas |= Q(
+            empleado_id=horario.empleado_id,
+            vigente_desde=horario.fecha,
+        )
+    predeterminados_de_pagina = set(
+        HorarioPredeterminado.objects.filter(
+            condiciones_predeterminadas,
+        ).values_list('empleado_id', 'vigente_desde')
+    )
+    for horario in horarios_pagina:
+        horario.es_predeterminado = (
+            horario.empleado_id,
+            horario.fecha,
+        ) in predeterminados_de_pagina
+    return render(request, 'web/horarios_laborales.html', {
+        'horarios': pagina,
+        'fecha_desde': request.GET.get('fecha_desde', ''),
+        'fecha_hasta': request.GET.get('fecha_hasta', ''),
+        'errores': errores,
+        'puede_ver_todos': rol in roles_con_acceso_general,
+        'puede_gestionar': puede_gestionar,
+        'formulario_horario': formulario,
+        'filas_previsualizadas': filas_previsualizadas,
+        'token_previsualizacion': (
+            carga_pendiente.get('token') if carga_pendiente else ''
+        ),
+    })
+
+
+@login_required
+def plantilla_horarios_laborales(request):
+    if rol_de(request.user) not in ('GERENTE', 'ADMINISTRATIVO'):
+        raise PermissionDenied('Solo GERENTE o ADMINISTRATIVO puede descargar la plantilla.')
+    respuesta = HttpResponse(
+        'legajo,fecha,hora_entrada,hora_salida,es_franco,observaciones\r\n'
+        'EMP-001,2026-10-21,09:00,18:00,No,Turno habitual\r\n'
+        'EMP-001,2026-10-22,,,Sí,Franco semanal\r\n',
+        content_type='text/csv; charset=utf-8',
+    )
+    respuesta['Content-Disposition'] = (
+        'attachment; filename="plantilla_horarios.csv"'
+    )
+    return respuesta
 
 
 @login_required
@@ -340,6 +677,11 @@ def asistencia_empleado_mes(request, empleado_id):
             fecha__lt=fin_mes,
         ).order_by('fecha')
     )
+    for registro in registros:
+        registro.horario_esperado = obtener_horario_esperado(
+            empleado,
+            registro.fecha,
+        )
     licencias = list(
         SolicitudLicencia.objects.filter(
             empleado=empleado,
