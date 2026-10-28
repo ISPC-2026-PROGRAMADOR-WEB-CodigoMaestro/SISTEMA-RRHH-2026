@@ -43,6 +43,7 @@ urlpatterns = [
     path('api/incidencias/', include('apps.incidencias.urls')),
     path('api/capacitaciones/', include('apps.capacitaciones.urls')),
     path('api/reportes/', include('apps.reportes.urls')),
+    path('api/reclutamiento/', include('apps.reclutamiento.urls')),
 ]
 
 if settings.DEBUG:

@@ -150,6 +150,9 @@ def modulo_list(request, slug):
     if cfg is None:
         messages.error(request, 'Módulo no encontrado.')
         return redirect('web:dashboard')
+    if _es_reclutamiento(slug) and not _puede_ver_reclutamiento(request.user):
+        messages.error(request, 'No tenés permiso para consultar este módulo.')
+        return redirect('web:dashboard')
 
     modelo = cfg['model']
     form_class = cfg['form']
@@ -459,6 +462,17 @@ def _puede_operar(user):
     return rol_de(user) in ('GERENTE', 'ADMINISTRATIVO')
 
 
+def _es_reclutamiento(slug):
+    return slug in (
+        'vacantes', 'postulantes', 'postulaciones', 'entrevistas',
+    )
+
+
+def _puede_ver_reclutamiento(user):
+    from apps.accounts.permissions import rol_de
+    return rol_de(user) in ('GERENTE', 'ADMINISTRATIVO')
+
+
 def _aplicar_rol(user, rol):
     from django.contrib.auth.models import Group
 
@@ -555,6 +569,9 @@ def modulo_editar(request, slug, pk):
     if cfg is None or cfg['form'] is None:
         messages.error(request, 'Módulo no editable.')
         return redirect('web:dashboard')
+    if _es_reclutamiento(slug) and not _puede_ver_reclutamiento(request.user):
+        messages.error(request, 'No tenés permiso para consultar este módulo.')
+        return redirect('web:dashboard')
     if not _puede_operar(request.user):
         messages.error(request, 'No tenés permiso para editar este módulo.')
         return redirect('web:modulo', slug=slug)
@@ -581,8 +598,14 @@ def modulo_eliminar(request, slug, pk):
     if cfg is None:
         messages.error(request, 'Módulo no encontrado.')
         return redirect('web:dashboard')
+    if _es_reclutamiento(slug) and not _puede_ver_reclutamiento(request.user):
+        messages.error(request, 'No tenés permiso para consultar este módulo.')
+        return redirect('web:dashboard')
     if not _puede_operar(request.user):
         messages.error(request, 'No tenés permiso para eliminar en este módulo.')
+        return redirect('web:modulo', slug=slug)
+    if _es_reclutamiento(slug) and not _es_gerente(request.user):
+        messages.error(request, 'Solo el Gerente puede eliminar registros de Reclutamiento.')
         return redirect('web:modulo', slug=slug)
     objeto = get_object_or_404(cfg['model'], pk=pk)
     if request.method == 'POST':

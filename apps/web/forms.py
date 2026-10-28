@@ -14,6 +14,7 @@ from apps.licencias.services import validar_solicitud
 from apps.organizacion.models import UnidadOrganizacional
 from apps.puestos.models import Designacion, Puesto
 from apps.sanciones.models import Sancion
+from apps.reclutamiento.models import Entrevista, Postulacion, Postulante, Vacante
 
 
 class DateInput(forms.DateInput):
@@ -249,4 +250,74 @@ class CursoForm(BootstrapMixin, forms.ModelForm):
             "fecha_inicio": DateInput(),
             "fecha_fin": DateInput(),
             "descripcion": forms.Textarea(attrs={"rows": 2}),
+        }
+
+
+
+class VacanteForm(BootstrapMixin, forms.ModelForm):
+    class Meta:
+        model = Vacante
+        fields = [
+            "puesto", "titulo", "descripcion", "requisitos",
+            "cantidad_vacantes", "fecha_publicacion", "fecha_cierre",
+            "estado",
+        ]
+        widgets = {
+            "fecha_publicacion": DateInput(),
+            "fecha_cierre": DateInput(),
+            "descripcion": forms.Textarea(attrs={"rows": 2}),
+            "requisitos": forms.Textarea(attrs={"rows": 2}),
+        }
+
+    def clean(self):
+        cleaned_data = super().clean()
+        inicio = cleaned_data.get("fecha_publicacion")
+        fin = cleaned_data.get("fecha_cierre")
+        if inicio and fin and fin < inicio:
+            self.add_error(
+                "fecha_cierre",
+                "La fecha de cierre no puede ser anterior a la fecha de publicación.",
+            )
+        return cleaned_data
+
+
+class PostulanteForm(BootstrapMixin, forms.ModelForm):
+    class Meta:
+        model = Postulante
+        fields = [
+            "apellido", "nombre", "numero_documento", "email",
+            "telefono", "formacion", "experiencia", "curriculum",
+            "observaciones",
+        ]
+        widgets = {
+            "formacion": forms.Textarea(attrs={"rows": 2}),
+            "experiencia": forms.Textarea(attrs={"rows": 2}),
+            "observaciones": forms.Textarea(attrs={"rows": 2}),
+        }
+
+
+class PostulacionForm(BootstrapMixin, forms.ModelForm):
+    class Meta:
+        model = Postulacion
+        fields = [
+            "postulante", "vacante", "estado", "observaciones",
+        ]
+        widgets = {
+            "observaciones": forms.Textarea(attrs={"rows": 2}),
+        }
+
+
+class EntrevistaForm(BootstrapMixin, forms.ModelForm):
+    class Meta:
+        model = Entrevista
+        fields = [
+            "postulacion", "fecha", "entrevistador",
+            "resultado", "observaciones",
+        ]
+        widgets = {
+            "fecha": forms.DateTimeInput(
+                attrs={"type": "datetime-local"},
+                format="%Y-%m-%dT%H:%M",
+            ),
+            "observaciones": forms.Textarea(attrs={"rows": 2}),
         }
