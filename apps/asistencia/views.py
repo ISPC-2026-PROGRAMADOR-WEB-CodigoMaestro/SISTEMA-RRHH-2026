@@ -8,7 +8,7 @@ from rest_framework.decorators import action
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
 
-from apps.accounts.permissions import OperarPersonal
+from apps.accounts.permissions import OperarPersonal, rol_de
 from apps.empleados.models import Empleado
 
 from .models import (
@@ -19,6 +19,7 @@ from .models import (
     RegistroAsistencia,
     Turno,
 )
+from .permissions import VerAsistenciaPropiaOOperarPersonal
 from .serializers import (
     AsignacionJornadaSerializer,
     CerrarDiaSerializer,
@@ -78,11 +79,17 @@ class FeriadoViewSet(viewsets.ModelViewSet):
 class RegistroAsistenciaViewSet(viewsets.ModelViewSet):
     queryset = RegistroAsistencia.objects.select_related('empleado', 'cargado_por')
     serializer_class = RegistroAsistenciaSerializer
-    permission_classes = [permissions.IsAuthenticated, OperarPersonal]
+    permission_classes = [permissions.IsAuthenticated, VerAsistenciaPropiaOOperarPersonal]
     filterset_fields = ['empleado', 'tipo', 'justificado', 'fecha']
     search_fields = ['empleado__legajo', 'empleado__apellido']
     ordering_fields = ['fecha', 'minutos_tardanza', 'minutos_extra']
     ordering = ['-fecha']
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        if rol_de(self.request.user) not in ('GERENTE', 'ADMINISTRATIVO', 'LECTURA'):
+            queryset = queryset.filter(empleado__usuario=self.request.user)
+        return queryset
 
     def perform_create(self, serializer):
         serializer.save(cargado_por=self.request.user)

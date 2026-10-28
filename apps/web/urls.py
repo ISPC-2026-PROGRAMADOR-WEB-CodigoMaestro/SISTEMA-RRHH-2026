@@ -11,6 +11,12 @@ urlpatterns = [
     path('logout/', views.logout_view, name='logout'),
     path('reportes/', views.reportes_view, name='reportes'),
     path('mis-licencias/', views.mis_licencias, name='mis_licencias'),
+    path('horarios-laborales/', views.horarios_laborales, name='horarios_laborales'),
+    path(
+        'horarios-laborales/plantilla/',
+        views.plantilla_horarios_laborales,
+        name='plantilla_horarios_laborales',
+    ),
     path('mis-licencias/<int:pk>/cancelar/', views.cancelar_mi_licencia, name='cancelar_mi_licencia'),
     path(
         'asistencia/empleados/<int:empleado_id>/',
