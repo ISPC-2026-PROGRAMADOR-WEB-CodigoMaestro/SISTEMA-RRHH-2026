@@ -7,6 +7,7 @@ from apps.incidencias.models import Incidencia
 from apps.licencias.models import SaldoVacaciones, SolicitudLicencia
 from apps.organizacion.models import UnidadOrganizacional
 from apps.puestos.models import Designacion, Puesto
+from apps.reclutamiento.models import Entrevista, Postulacion, Postulante, Vacante
 from apps.sanciones.models import Sancion
 
 from .forms import (
@@ -15,12 +16,16 @@ from .forms import (
     DesignacionForm,
     DocumentoForm,
     EmpleadoForm,
+    EntrevistaForm,
     EvaluacionForm,
     IncidenciaForm,
+    PostulacionForm,
+    PostulanteForm,
     PuestoForm,
     SancionForm,
     SolicitudLicenciaForm,
     UnidadForm,
+    VacanteForm,
 )
 
 
@@ -70,6 +75,36 @@ MODULOS = {
         'columnas': [('Empleado', 'empleado'), ('Puesto', 'puesto.denominacion'), ('Inicio', 'fecha_inicio'),
                      ('Modalidad', 'modalidad_contractual'), ('Activa', 'activa')],
         'search': ['empleado__apellido', 'empleado__legajo'],
+    },
+    'vacantes': {
+        'titulo': 'Vacantes', 'icono': 'bi-briefcase', 'model': Vacante,
+        'form': VacanteForm,
+        'columnas': [('Título', 'titulo'), ('Puesto', 'puesto.denominacion'),
+                     ('Cantidad', 'cantidad_vacantes'), ('Publicación', 'fecha_publicacion'),
+                     ('Cierre', 'fecha_cierre'), ('Estado', 'estado')],
+        'search': ['titulo', 'puesto__denominacion'],
+    },
+    'postulantes': {
+        'titulo': 'Postulantes', 'icono': 'bi-people', 'model': Postulante,
+        'form': PostulanteForm,
+        'columnas': [('Apellido', 'apellido'), ('Nombre', 'nombre'),
+                     ('Documento', 'numero_documento'), ('Email', 'email'),
+                     ('Teléfono', 'telefono')],
+        'search': ['apellido', 'nombre', 'numero_documento', 'email'],
+    },
+    'postulaciones': {
+        'titulo': 'Postulaciones', 'icono': 'bi-file-earmark-person', 'model': Postulacion,
+        'form': PostulacionForm,
+        'columnas': [('Postulante', 'postulante'), ('Vacante', 'vacante.titulo'),
+                     ('Fecha', 'fecha_postulacion'), ('Estado', 'estado')],
+        'search': ['postulante__apellido', 'postulante__nombre', 'vacante__titulo'],
+    },
+    'entrevistas': {
+        'titulo': 'Entrevistas', 'icono': 'bi-calendar-event', 'model': Entrevista,
+        'form': EntrevistaForm,
+        'columnas': [('Postulación', 'postulacion'), ('Fecha', 'fecha'),
+                     ('Entrevistador', 'entrevistador'), ('Resultado', 'resultado')],
+        'search': ['postulacion__postulante__apellido', 'entrevistador'],
     },
     'documentos': {
         'titulo': 'Legajo Digital', 'icono': 'bi-folder2-open', 'model': DocumentoLegajo,
